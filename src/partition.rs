@@ -25,27 +25,20 @@ impl<'a> Cache<'a> {
     }
 
     pub fn put(&mut self, key: &'a str, new_entry_value: String) {
-        if self.map.contains_key(key) {
-            let new_entry_val = EntryVal {
-                value: new_entry_value,
-            };
-            self.map.insert(key, new_entry_val);
-        } else {
-            let entry = EntryVal {
-                value: new_entry_value,
-            };
-            self.map.insert(key, entry);
-        }
+        let entry = EntryVal {
+            value: new_entry_value,
+        };
+        self.map.insert(key, entry);
     }
 
     pub fn get(&self, key: &'a str) -> Option<&EntryVal> {
         if self.map.contains_key(&key) {
             let result = self.map.get(&key).unwrap();
             println!("Found value {}", result.value);
-            return Some(result);
+            Some(result)
         } else {
             println!("No value found!");
-            return None;
+            None
         }
     }
 }
