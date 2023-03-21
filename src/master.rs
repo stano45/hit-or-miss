@@ -23,7 +23,7 @@ async fn main() {
     let args = Cli::parse();
 
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
     let addr = format!("127.0.0.1:{0}", args.port);
@@ -64,12 +64,12 @@ async fn main() {
     }
 }
 
-async fn handle_connection(mut socket: TcpStream, db: Db) {
+async fn handle_connection(mut socket: TcpStream, _db: Db) {
     event!(
         Level::DEBUG,
         "{}",
         format!("Handling connection: {:?}", socket)
     );
 
-    socket.write(b"yoooo").await.unwrap();
+    socket.write(b"hello from server\n").await.unwrap();
 }
