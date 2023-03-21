@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io;
 
 #[derive(Debug)]
 pub struct EntryVal {
@@ -44,14 +43,14 @@ impl <'a> Cache <'a>{
         }
     }
     
-    pub fn get(&self, key: &'a str)->io::Result<Option<&EntryVal>> {
+    pub fn get(&self, key: &'a str)->Option<&EntryVal> {
         if self.map.contains_key(&key) {
             let result = self.map.get(&key).unwrap(); 
             println!("Found value {}", result.value);
-            return Ok(Some(result));
+            return Some(result);
         }else {
             println!("No value found!");
-            return Ok(None);
+            return None;
         }
     }
 }
@@ -67,7 +66,7 @@ mod tests {
             capacity: 20,
         };
         cache.put("Key", String::from("Value"));
-        let res = cache.get("Key").unwrap().unwrap();
+        let res = cache.get("Key").unwrap();
         assert_eq!(&res.value, "Value");
     }
 }
