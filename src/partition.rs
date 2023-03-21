@@ -66,10 +66,7 @@ mod tests {
             map: HashMap::new(),
             capacity: 20,
         };
-        let entry = EntryVal {
-            value: String::from("Value"),
-        };
-        cache.map.insert("Key", entry);
+        cache.put("Key", String::from("Value"));
         let res = cache.get("Key").unwrap().unwrap();
         assert_eq!(&res.value, "Value");
     }
