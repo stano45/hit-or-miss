@@ -71,5 +71,5 @@ async fn handle_connection(mut socket: TcpStream, _db: Db) {
         format!("Handling connection: {:?}", socket)
     );
 
-    socket.write(b"hello from server\n").await.unwrap();
+    socket.write_all(b"hello from server\n").await.unwrap();
 }
