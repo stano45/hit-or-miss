@@ -6,49 +6,44 @@ pub struct EntryVal {
 }
 
 impl EntryVal {
-    pub fn new(value: String)-> Self {
-        EntryVal {
-            value,
-        }
+    pub fn new(value: String) -> Self {
+        EntryVal { value }
     }
-    pub fn update_value(&mut self, new_value: String){
+    pub fn update_value(&mut self, new_value: String) {
         self.value = new_value;
     }
 }
 
 pub struct Cache<'a> {
-    pub map: HashMap<&'a str, EntryVal>, 
+    pub map: HashMap<&'a str, EntryVal>,
     pub capacity: u32,
-}   
+}
 
-impl <'a> Cache <'a>{
-    pub fn new(map: HashMap<&'a str, EntryVal>, capacity: u32)-> Self {
-        Self {
-            map,
-            capacity,
-        }
+impl<'a> Cache<'a> {
+    pub fn new(map: HashMap<&'a str, EntryVal>, capacity: u32) -> Self {
+        Self { map, capacity }
     }
 
     pub fn put(&mut self, key: &'a str, new_entry_value: String) {
         if self.map.contains_key(key) {
-            let new_entry_val = EntryVal{
+            let new_entry_val = EntryVal {
                 value: new_entry_value,
             };
             self.map.insert(key, new_entry_val);
         } else {
             let entry = EntryVal {
-                value: new_entry_value, 
+                value: new_entry_value,
             };
             self.map.insert(key, entry);
         }
     }
-    
-    pub fn get(&self, key: &'a str)->Option<&EntryVal> {
+
+    pub fn get(&self, key: &'a str) -> Option<&EntryVal> {
         if self.map.contains_key(&key) {
-            let result = self.map.get(&key).unwrap(); 
+            let result = self.map.get(&key).unwrap();
             println!("Found value {}", result.value);
             return Some(result);
-        }else {
+        } else {
             println!("No value found!");
             return None;
         }
