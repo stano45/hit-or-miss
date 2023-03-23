@@ -2,11 +2,11 @@ use bincode::deserialize;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::VecDeque;
+use std::str;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
-use std::str;
-use std::collections::VecDeque;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, PartialOrd)]
 pub struct EntryVal {
@@ -19,10 +19,10 @@ type Db = Arc<Mutex<HashMap<String, Bytes>>>;
 
 impl EntryVal {
     pub fn new(value: String) -> Self {
-        EntryVal { 
+        EntryVal {
             next: None,
             prev: None,
-            value 
+            value,
         }
     }
     pub fn update_value(&mut self, new_value: String) {
@@ -30,7 +30,7 @@ impl EntryVal {
     }
 }
 
-pub struct Cache{
+pub struct Cache {
     pub map: Db,
     pub capacity: u32,
     pub queue: VecDeque<EntryVal>,
@@ -38,7 +38,11 @@ pub struct Cache{
 
 impl Cache {
     pub fn new(map: Db, capacity: u32, queue: VecDeque<EntryVal>) -> Self {
-        Self { map, capacity, queue}
+        Self {
+            map,
+            capacity,
+            queue,
+        }
     }
 
     pub fn put(&mut self, key: String, new_entry_value: String) {
@@ -112,8 +116,11 @@ async fn handle_connection(mut stream: TcpStream) {
                 "DELETE" => {
                     stream.write_all(b"Deleted the data\n").await.unwrap();
                 }
-                _=> {
-                    stream.write_all(b"There was an error with the request\n").await.unwrap();
+                _ => {
+                    stream
+                        .write_all(b"There was an error with the request\n")
+                        .await
+                        .unwrap();
                 }
             }
         }
