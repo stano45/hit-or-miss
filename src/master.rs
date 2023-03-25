@@ -98,7 +98,7 @@ async fn handle_connection(socket: TcpStream, _db: Db) {
             };
 
             // Get indices of multi-byte characters (without this, this string would panic: ˚å)
-            let start = str_buf.char_indices().nth(0).map(|(i, _)| i).unwrap_or(0);
+            let start = str_buf.char_indices().next().map(|(i, _)| i).unwrap_or(0);
             let end = str_buf.char_indices().nth(3).map(|(i, _)| i).unwrap_or(0);
             match &str_buf[start..end] {
                 "GET" => {
