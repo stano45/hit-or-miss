@@ -8,6 +8,11 @@ use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tracing::{event, Level};
 
+static ERR_INVALID_REQUEST_CMD: &[u8; 34] = b"Invalid request: command not found";
+static _ERR_INVALID_REQUEST_ARG: &[u8; 42] = b"Invalid request: invalid command arguments";
+static _ERR_INVALID_REQUEST_FLAG: &[u8; 32] = b"Invalid request: flags not found";
+static ERR_INVALID_REQUEST_FORMAT: &[u8; 39] = b"Invalid request: invalid UTF-8 sequence";
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -64,12 +69,89 @@ async fn main() {
     }
 }
 
-async fn handle_connection(mut socket: TcpStream, _db: Db) {
+async fn handle_connection(socket: TcpStream, _db: Db) {
     event!(
         Level::DEBUG,
         "{}",
         format!("Handling connection: {:?}", socket)
     );
 
-    socket.write_all(b"hello from server\n").await.unwrap();
+    let mut buf = [0; 4096];
+    match socket.try_read(&mut buf) {
+        Ok(_) => {
+            let v = buf.to_vec();
+            let str_buf = match std::str::from_utf8(&v) {
+                Ok(v) => {
+                    event!(
+                        Level::DEBUG,
+                        "Successfully parsed utf8 request from {:?}: {}",
+                        socket.peer_addr().unwrap(),
+                        v,
+                    );
+                    v
+                }
+                Err(e) => {
+                    event!(Level::DEBUG, "Erorr parsing request {:?}: {}", v, e);
+                    handle_error(socket, ERR_INVALID_REQUEST_FORMAT, _db).await;
+                    return;
+                }
+            };
+
+            // Get indices of multi-byte characters (without this, this string would panic: ˚å)
+            let start = str_buf.char_indices().nth(0).map(|(i, _)| i).unwrap_or(0);
+            let end = str_buf.char_indices().nth(3).map(|(i, _)| i).unwrap_or(0);
+            match &str_buf[start..end] {
+                "GET" => {
+                    handle_get(socket, str_buf, _db).await;
+                }
+                "SET" => {
+                    handle_set(socket, str_buf, _db).await;
+                }
+                "DEL" => {
+                    handle_delete(socket, str_buf, _db).await;
+                }
+                _ => {
+                    handle_error(socket, ERR_INVALID_REQUEST_CMD, _db).await;
+                }
+            }
+        }
+        Err(e) => {
+            //TODO: I guess we should handle this error lol
+            println!("error: {e}");
+        }
+    }
+}
+
+async fn handle_get(mut socket: TcpStream, buf: &str, _db: Db) {
+    socket.write_all(b"Here is the data\n").await.unwrap();
+    socket.write_all(buf.as_bytes()).await.unwrap();
+}
+
+async fn handle_set(mut socket: TcpStream, buf: &str, _db: Db) {
+    socket
+        .write_all(
+            b"[Intro: 2Pac]
+                    (Sucka-ass)
+                    I ain't got no mothafuckin' friends
+                    That's why I fucked yo' bitch, you fat mothafucka!
+                    (Take money) West Side, Bad Boy killas
+                    (Take money) (You know) You know who the realest is
+                    (Take money) Niggas, we bring it too
+                    That's a'ight, haha
+                    (Take money) Haha\n",
+        )
+        .await
+        .unwrap();
+    socket.write_all(buf.as_bytes()).await.unwrap();
+}
+
+async fn handle_delete(mut socket: TcpStream, buf: &str, _db: Db) {
+    socket.write_all(b"Deleted the data\n").await.unwrap();
+    socket.write_all(buf.as_bytes()).await.unwrap();
+}
+
+async fn handle_error(mut socket: TcpStream, err_msg: &[u8], _db: Db) {
+    let mut message = b"Error: ".to_vec();
+    message.extend_from_slice(err_msg);
+    socket.write_all(&message).await.unwrap();
 }
