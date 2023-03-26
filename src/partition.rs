@@ -20,14 +20,17 @@ struct Cli {
 #[tokio::main]
 pub async fn main() {
     let args = Cli::parse();
-    let mut cache = Arc::new(Mutex::new(LruCache::<String, String>::new(
+    let mut _cache = Arc::new(Mutex::new(LruCache::<String, String>::new(
         NonZeroUsize::new(2).unwrap(),
     )));
     let addr = format!("localhost:{0}", args.port);
     let addr_clone = addr.clone();
     let listener = match TcpListener::bind(addr).await {
         Ok(listener) => {
-            event!(Level::DEBUG, "Connection established on address: {addr_clone}");
+            event!(
+                Level::DEBUG,
+                "Connection established on address: {addr_clone}"
+            );
             listener
         }
         Err(_) => {
@@ -62,6 +65,7 @@ async fn handle_connection(mut stream: TcpStream) {
                     stream.write_all(str_buf.as_bytes()).await.unwrap();
                 }
                 "GET" => {
+                    println!("Inside get");
                     stream.write_all(b"Here is the data\n").await.unwrap();
                     stream.write_all(str_buf.as_bytes()).await.unwrap();
                 }
