@@ -8,6 +8,7 @@ use std::str;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, TcpStream};
+use tracing::{event, Level};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -26,7 +27,7 @@ pub async fn main() {
     let addr_clone = addr.clone();
     let listener = match TcpListener::bind(addr).await {
         Ok(listener) => {
-            println!("Connection established on address: {addr_clone}");
+            event!(Level::DEBUG, "Connection established on address: {addr_clone}");
             listener
         }
         Err(_) => {
@@ -48,39 +49,39 @@ async fn handle_connection(mut stream: TcpStream) {
     match stream.try_read(&mut buf) {
         Ok(_) => {
             let v = buf.to_vec();
-            let _ = match str::from_utf8(&v) {
+            let str_buf = match str::from_utf8(&v) {
                 Ok(v) => {
-                    println!("String: {}", v);
+                    event!(Level::DEBUG, "Successfully parsed message {}", v);
                     v
                 }
                 Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
             };
-            let s = str::from_utf8(&buf.to_vec()).unwrap().to_string();
-            let cmd = &s[0..3];
-            match cmd {
+            match &str_buf[0..3] {
                 "SET" => {
-
-                    stream.write_all(b"OK\n").await.unwrap();
+                    stream.write_all(b"Doener mit Dativ").await.unwrap();
+                    stream.write_all(str_buf.as_bytes()).await.unwrap();
                 }
                 "GET" => {
                     stream.write_all(b"Here is the data\n").await.unwrap();
+                    stream.write_all(str_buf.as_bytes()).await.unwrap();
                 }
-                "DELETE" => {
+                "DEL" => {
                     stream.write_all(b"Deleted the data\n").await.unwrap();
+                    stream.write_all(str_buf.as_bytes()).await.unwrap();
                 }
                 _ => {
                     stream
                         .write_all(b"There was an error with the request\n")
                         .await
                         .unwrap();
+                    stream.write_all(str_buf.as_bytes()).await.unwrap();
                 }
             }
         }
         Err(e) => {
-            println!("error: {e}");
+            panic!("error: {e}");
         }
     }
-    stream.write_all(b"Hello from partition\n").await.unwrap();
 }
 
 #[cfg(test)]
