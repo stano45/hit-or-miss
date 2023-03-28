@@ -7,7 +7,7 @@ edition = "2021"
 
 [[bin]]
 name = "master"
-path = "src/partition.rs"
+path = "src/master.rs"
 
 [dependencies]
 clap = { version = "4.1.11", features = ["derive"] }
