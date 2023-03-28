@@ -26,8 +26,8 @@ pub async fn main() {
     let addr_clone = addr.clone();
     let master = String::from("localhost:6969");
     tracing_subscriber::fmt()
-    .with_max_level(tracing::Level::DEBUG)
-    .init();
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
     event!(Level::INFO, "Starting partition on address: {addr}");
 
     let listener = match TcpListener::bind(addr).await {
@@ -74,7 +74,7 @@ pub async fn main() {
     }
 }
 
-//master node port: 6969 
+//master node port: 6969
 
 async fn handle_connection(mut stream: TcpStream, cache: Cache) {
     let mut buf = [0; 4096];
@@ -102,7 +102,10 @@ async fn handle_connection(mut stream: TcpStream, cache: Cache) {
                     let key = &str_buf[5..8];
                     let value = &str_buf[9..12];
                     println!("Key: {}, Value: {}", key, value);
-                    cache.lock().unwrap().push(key.to_string(), value.to_string());
+                    cache
+                        .lock()
+                        .unwrap()
+                        .push(key.to_string(), value.to_string());
                     let value_string = cache.lock().unwrap().get(key).unwrap().to_owned();
                     println!("Value in cache: {}", value_string);
                     stream.write_all(b"Here is the data\n").await.unwrap();
