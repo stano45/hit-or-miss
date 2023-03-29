@@ -24,7 +24,7 @@ pub async fn main() {
     let args = Cli::parse();
     let addr = format!("localhost:{0}", args.port);
     let addr_clone = addr.clone();
-    let master = String::from("localhost:6969");
+    let _master = String::from("localhost:6969");
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .init();
