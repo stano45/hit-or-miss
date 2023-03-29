@@ -66,7 +66,7 @@ pub async fn main() {
                 continue;
             }
         };
-        let cache_clone = cache.clone();
+        let cache_clone = Arc::clone(&cache);
         tokio::spawn(async move {
             stream.readable().await.unwrap();
             handle_connection(stream, cache_clone).await;
