@@ -6,7 +6,7 @@ use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::str;
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncWriteExt, AsyncReadExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{event, Level};
 
@@ -25,12 +25,11 @@ pub async fn main() {
 
     let addr = format!("localhost:{0}", args.port);
     let addr_clone = addr.clone();
-    
+
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .init();
     event!(Level::INFO, "Starting partition on address: {addr}");
-
 
     let listener = match TcpListener::bind(addr).await {
         Ok(listener) => {
@@ -47,7 +46,6 @@ pub async fn main() {
     //send NTF to master, wait for OK
     notify_master().await;
 
-    
     let cache = Arc::new(Mutex::new(LruCache::<String, String>::new(
         NonZeroUsize::new(2).unwrap(),
     )));
@@ -80,7 +78,7 @@ async fn notify_master() {
     let mut stream = TcpStream::connect(&master_addr).await.unwrap();
     // send data to master
     stream.write_all(b"NTF").await.unwrap();
-   
+
     let mut buf = [0; 4096];
     let x = match stream.read(&mut buf).await {
         Ok(_) => {
@@ -96,14 +94,12 @@ async fn notify_master() {
                     v.to_string()
                 }
                 Err(e) => {
-                    panic!("{}",e.to_string())     
+                    panic!("{}", e.to_string())
                 }
             };
             Ok(str_buf)
         }
-        Err(e) => {
-            Err(e)
-        }
+        Err(e) => Err(e),
     };
 
     match x {
@@ -120,7 +116,10 @@ async fn notify_master() {
                     );
                 }
                 _ => {
-                    panic!("Master responded with: {}, should be: ACK. Panicking!", str_buf);
+                    panic!(
+                        "Master responded with: {}, should be: ACK. Panicking!",
+                        str_buf
+                    );
                 }
             }
         }
