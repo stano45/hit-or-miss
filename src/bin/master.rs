@@ -29,7 +29,7 @@ async fn main() {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let addr = format!("127.0.0.1:6969");
+    let addr = "127.0.0.1:6969";
     event!(Level::INFO, "Starting master service on address: {addr}");
     let listener = match TcpListener::bind(addr).await {
         Ok(listener) => {
