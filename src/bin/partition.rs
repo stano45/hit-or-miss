@@ -74,6 +74,16 @@ pub async fn main() {
     }
 }
 
+fn iterate_until_whitespace(s: &str, start_index: usize) -> &str {
+    // Find the index of the next whitespace character
+    let end_index = s[start_index..]
+        .find(char::is_whitespace)
+        .map_or(s.len(), |i| start_index + i);
+
+    // Return the substring from the start index to the end index
+    &s[start_index..end_index]
+}
+
 //master node port: 6969
 
 async fn handle_connection(mut stream: TcpStream, cache: Cache) {
@@ -90,7 +100,7 @@ async fn handle_connection(mut stream: TcpStream, cache: Cache) {
             };
             match &str_buf[0..3] {
                 "GET" => {
-                    let key = &str_buf[4..8];
+                    let key = iterate_until_whitespace(str_buf, 4);
                     println!("Key: {}", key);
                     let value_string = cache.lock().unwrap().get(key).unwrap().to_owned();
                     let value = &value_string[..];
@@ -99,8 +109,8 @@ async fn handle_connection(mut stream: TcpStream, cache: Cache) {
                     stream.write_all(value.as_bytes()).await.unwrap();
                 }
                 "SET" => {
-                    let key = &str_buf[5..8];
-                    let value = &str_buf[9..12];
+                    let key = iterate_until_whitespace(str_buf, 4);
+                    let value = iterate_until_whitespace(str_buf, key.len() + 5);
                     println!("Key: {}, Value: {}", key, value);
                     cache
                         .lock()
