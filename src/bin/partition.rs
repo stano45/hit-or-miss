@@ -45,7 +45,7 @@ pub async fn main() {
 
     let mut stream = TcpStream::connect("127.0.0.1:6969").await.unwrap();
     // send data to the connected port
-    stream.write(b"NTF: I'm alive").await.unwrap();
+    stream.write_all(b"NTF: I'm alive").await.unwrap();
 
     let cache = Arc::new(Mutex::new(LruCache::<String, String>::new(
         NonZeroUsize::new(2).unwrap(),
