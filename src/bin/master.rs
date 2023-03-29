@@ -110,6 +110,9 @@ async fn handle_connection(socket: TcpStream, _db: Db) {
                 "DEL" => {
                     handle_delete(socket, str_buf, _db).await;
                 }
+                "NTF" => {
+                    handle_notify(socket, _db).await;
+                }
                 _ => {
                     handle_error(socket, ERR_INVALID_REQUEST_CMD, _db).await;
                 }
@@ -148,6 +151,15 @@ async fn handle_set(mut socket: TcpStream, buf: &str, _db: Db) {
 async fn handle_delete(mut socket: TcpStream, buf: &str, _db: Db) {
     socket.write_all(b"Deleted the data\n").await.unwrap();
     socket.write_all(buf.as_bytes()).await.unwrap();
+}
+
+async fn handle_notify(mut socket: TcpStream, _db: Db) {
+    event!(
+        Level::DEBUG,
+        "NTF from partition: {:?}",
+        socket.peer_addr().unwrap(),
+    );
+    socket.write_all(b"ACK\n").await.unwrap();
 }
 
 async fn handle_error(mut socket: TcpStream, err_msg: &[u8], _db: Db) {

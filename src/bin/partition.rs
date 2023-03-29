@@ -6,7 +6,7 @@ use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::str;
 use std::sync::{Arc, Mutex};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{event, Level};
 
@@ -22,13 +22,15 @@ type Cache = Arc<Mutex<LruCache<String, String>>>;
 #[tokio::main]
 pub async fn main() {
     let args = Cli::parse();
+
     let addr = format!("localhost:{0}", args.port);
     let addr_clone = addr.clone();
-    let _master = String::from("localhost:6969");
+    
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .init();
     event!(Level::INFO, "Starting partition on address: {addr}");
+
 
     let listener = match TcpListener::bind(addr).await {
         Ok(listener) => {
@@ -42,11 +44,10 @@ pub async fn main() {
             panic!("Failed to bind!");
         }
     };
+    //send NTF to master, wait for OK
+    notify_master().await;
 
-    let mut stream = TcpStream::connect("127.0.0.1:6969").await.unwrap();
-    // send data to the connected port
-    stream.write_all(b"NTF: I'm alive").await.unwrap();
-
+    
     let cache = Arc::new(Mutex::new(LruCache::<String, String>::new(
         NonZeroUsize::new(2).unwrap(),
     )));
@@ -74,7 +75,61 @@ pub async fn main() {
     }
 }
 
-//master node port: 6969
+async fn notify_master() {
+    let master_addr = String::from("127.0.0.1:6969");
+    let mut stream = TcpStream::connect(&master_addr).await.unwrap();
+    // send data to master
+    stream.write_all(b"NTF").await.unwrap();
+   
+    let mut buf = [0; 4096];
+    let x = match stream.read(&mut buf).await {
+        Ok(_) => {
+            let v = buf.to_vec();
+            let str_buf = match std::str::from_utf8(&v) {
+                Ok(v) => {
+                    event!(
+                        Level::DEBUG,
+                        "Successfully parsed utf8 request from {:?}: {}",
+                        stream.peer_addr().unwrap(),
+                        v,
+                    );
+                    v.to_string()
+                }
+                Err(e) => {
+                    panic!("{}",e.to_string())     
+                }
+            };
+            Ok(str_buf)
+        }
+        Err(e) => {
+            Err(e)
+        }
+    };
+
+    match x {
+        Ok(str_buf) => {
+            // Get indices of multi-byte characters (without this, this string would panic: ˚å)
+            let start = str_buf.char_indices().next().map(|(i, _)| i).unwrap_or(0);
+            let end = str_buf.char_indices().nth(3).map(|(i, _)| i).unwrap_or(0);
+            match &str_buf[start..end] {
+                "ACK" => {
+                    event!(
+                        Level::DEBUG,
+                        "Received ACK from master: {:?}",
+                        stream.peer_addr().unwrap(),
+                    );
+                }
+                _ => {
+                    panic!("Master responded with: {}, should be: ACK. Panicking!", str_buf);
+                }
+            }
+        }
+        Err(e) => {
+            //TODO: I guess we should handle this error lol
+            println!("error: {e}");
+        }
+    }
+}
 
 async fn handle_connection(mut stream: TcpStream, cache: Cache) {
     let mut buf = [0; 4096];
