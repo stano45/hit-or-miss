@@ -1,19 +1,51 @@
-use std::fmt;
+use std::str;
 
-pub static ERR_INVALID_REQUEST_CMD: &str = "Invalid request: command not found";
+pub static ERR_UNKNOWN_COMMAND: &str = "Invalid request: command not found";
 pub static ERR_NOT_ENOUGH_ARGS: &str = "Invalid request: not enough arguments";
-pub static _ERR_INVALID_REQUEST_ARG: &[u8; 42] = b"Invalid request: invalid command arguments";
-pub static _ERR_INVALID_REQUEST_FLAG: &[u8; 32] = b"Invalid request: flags not found";
-pub static _ERR_INVALID_REQUEST_FORMAT: &[u8; 39] = b"Invalid request: invalid UTF-8 sequence";
+pub static ERR_INVALID_ARGS: &str = "Invalid request: invalid command arguments";
+pub static ERR_INVALID_SEQUENCE: &str = "Invalid request: invalid UTF-8 sequence";
+pub static ERR_SOCKET_READ: &str = "Internal error: could not read from socket";
+pub static ERR_UNKNOWN: &str = "Invalid request: invalid UTF-8 sequence";
 
 #[derive(Debug, Clone)]
 pub struct Error {
-    pub code: u8,
+    pub code: ErrorCode,
     pub msg: String,
 }
-impl fmt::Display for Error {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "Error {}: {}", self.code, self.msg)
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorCode {
+    InvalidRequestCmd = 1,
+    NotEnoughArgs = 2,
+    InvalidRequestArg = 3,
+    InvalidSequence = 4,
+    FailedSocketRead = 5,
+    Unknown = 6,
+}
+
+impl Error {
+    pub fn from_code(code: ErrorCode) -> Self {
+        let msg = match code {
+            ErrorCode::InvalidRequestCmd => ERR_UNKNOWN_COMMAND.to_string(),
+            ErrorCode::NotEnoughArgs => ERR_NOT_ENOUGH_ARGS.to_string(),
+            ErrorCode::InvalidRequestArg => ERR_INVALID_ARGS.to_string(),
+            ErrorCode::InvalidSequence => ERR_INVALID_SEQUENCE.to_string(),
+            ErrorCode::FailedSocketRead => ERR_SOCKET_READ.to_string(),
+            ErrorCode::Unknown => ERR_UNKNOWN.to_string(),
+        };
+
+        Error { code, msg }
+    }
+    pub fn from_int(value: u8) -> Self {
+        let code = match value {
+            1 => ErrorCode::InvalidRequestCmd,
+            2 => ErrorCode::NotEnoughArgs,
+            3 => ErrorCode::InvalidRequestArg,
+            4 => ErrorCode::InvalidSequence,
+            _ => ErrorCode::Unknown,
+        };
+
+        Self::from_code(code)
     }
 }
 
@@ -29,10 +61,8 @@ pub fn parse_request(mut message: Vec<u8>) -> Result<ParsedRequest, Error> {
         message.truncate(pos);
     }
 
-    let buf = std::str::from_utf8(&message).map_err(|_| Error {
-        code: 1,
-        msg: "XD".to_string(),
-    })?;
+    let buf =
+        std::str::from_utf8(&message).map_err(|_| Error::from_code(ErrorCode::InvalidSequence))?;
     let parts: Vec<&str> = buf.splitn(3, char::is_whitespace).collect();
 
     let cmd = extract_cmd(&parts)?;
@@ -61,41 +91,26 @@ pub fn parse_request(mut message: Vec<u8>) -> Result<ParsedRequest, Error> {
 
 fn extract_error(parts: &Vec<&str>) -> Result<Option<Error>, Error> {
     if parts.len() < 3 {
-        Err(Error {
-            code: 1,
-            msg: ERR_NOT_ENOUGH_ARGS.to_string(),
-        })
+        Err(Error::from_code(ErrorCode::NotEnoughArgs))
     } else {
-        Ok(Some(Error {
-            code: parts[1].parse().unwrap(),
-            msg: parts[2].to_string(),
-        }))
+        Ok(Some(Error::from_int(parts[1].parse().unwrap())))
     }
 }
 
 fn extract_cmd(parts: &Vec<&str>) -> Result<String, Error> {
     if parts.is_empty() {
-        Err(Error {
-            code: 1,
-            msg: ERR_INVALID_REQUEST_CMD.to_string(),
-        })
+        Err(Error::from_code(ErrorCode::NotEnoughArgs))
     } else {
         match parts[0] {
             "GET" | "DEL" | "SET" | "NTF" | "LSP" | "LSD" | "ERR" => Ok(parts[0].to_string()),
-            _ => Err(Error {
-                code: 1,
-                msg: ERR_INVALID_REQUEST_CMD.to_string(),
-            }),
+            _ => Err(Error::from_code(ErrorCode::InvalidRequestCmd)),
         }
     }
 }
 
 fn extract_key(parts: &Vec<&str>) -> Result<Option<String>, Error> {
     if parts.len() < 2 {
-        Err(Error {
-            code: 1,
-            msg: ERR_NOT_ENOUGH_ARGS.to_string(),
-        })
+        Err(Error::from_code(ErrorCode::NotEnoughArgs))
     } else if parts[0].to_uppercase() == "GET" && parts.len() >= 3 {
         let key = format!("{} {}", parts[1], parts[2]).replace("\\0", "\u{0000}");
         Ok(Some(key))
@@ -106,10 +121,7 @@ fn extract_key(parts: &Vec<&str>) -> Result<Option<String>, Error> {
 
 fn extract_value(parts: &Vec<&str>) -> Result<Option<String>, Error> {
     if parts.len() < 3 {
-        Err(Error {
-            code: 1,
-            msg: ERR_NOT_ENOUGH_ARGS.to_string(),
-        })
+        Err(Error::from_code(ErrorCode::NotEnoughArgs))
     } else {
         Ok(Some(parts[2].to_string()))
     }
