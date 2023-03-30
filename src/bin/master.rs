@@ -9,7 +9,6 @@ use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tracing::{event, Level};
 
-
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
