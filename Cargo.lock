@@ -151,6 +151,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fed44880c466736ef9a5c5b5facefb5ed0785676d0c02d612db14e54f0d84286"
 
 [[package]]
+name = "hitormiss"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "clap",
+ "hash_ring",
+ "lru",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "io-lifetimes"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -296,19 +309,6 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-sys",
-]
-
-[[package]]
-name = "partition"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "clap",
- "hash_ring",
- "lru",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

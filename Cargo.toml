@@ -1,5 +1,5 @@
 [package]
-name = "partition"
+name = "hitormiss"
 version = "0.1.0"
 edition = "2021"
 
