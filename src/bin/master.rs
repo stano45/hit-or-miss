@@ -1,7 +1,6 @@
-use clap::Parser;
 use core::panic;
 use hash_ring::HashRing;
-use hitormiss::parser::{parse_request, Error, ParsedRequest};
+use hitormiss::parser::{parse_request, CommandType, Error, ErrorCode};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWriteExt;
@@ -9,13 +8,6 @@ use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tracing::{event, Level};
 
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    /// Network port to use
-    #[arg(value_parser = clap::value_parser!(u16).range(1..))]
-    port: u16,
-}
 #[derive(Debug, Clone)]
 struct Partition {
     conn: Arc<Mutex<TcpStream>>,
@@ -35,9 +27,12 @@ async fn main() {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let addr = "127.0.0.1:6969";
-    event!(Level::INFO, "Starting master service on address: {addr}");
-    let listener = match TcpListener::bind(addr).await {
+    const MASTER_ADDR: &str = "127.0.0.1:6969";
+    event!(
+        Level::INFO,
+        "Starting master service on address: {MASTER_ADDR}"
+    );
+    let listener = match TcpListener::bind(MASTER_ADDR).await {
         Ok(listener) => {
             event!(Level::DEBUG, "{}", format!("Bind {:?}", listener));
             listener
@@ -48,9 +43,9 @@ async fn main() {
         }
     };
 
-    // how many times one node is replicated on the ring
+    // # of replicas per partition
     let num_replicas = 10;
-    // set this to define some initial nodes (maybe when the drops and restarts or something idk)
+    // set this to define some initial nodes
     let initial_nodes: Vec<Partition> = Vec::new();
     // consistent hashing node ring
     let ring: Ring = Arc::new(Mutex::new(HashRing::new(initial_nodes, num_replicas)));
@@ -73,12 +68,17 @@ async fn main() {
 
         let ring_clone: Ring = ring.clone();
         tokio::spawn(async move {
-            handle_connection(socket, ring_clone).await;
+            match handle_connection(socket, ring_clone).await {
+                Ok(_) => {}
+                Err(e) => {
+                    event!(Level::ERROR, "Failed to handle connection: {}", e);
+                }
+            }
         });
     }
 }
 
-async fn handle_connection(socket: TcpStream, ring: Ring) {
+async fn handle_connection(socket: TcpStream, ring: Ring) -> Result<(), Error> {
     event!(
         Level::DEBUG,
         "{}",
@@ -86,18 +86,36 @@ async fn handle_connection(socket: TcpStream, ring: Ring) {
     );
 
     let mut buf = [0; 4096];
-    let request: Result<ParsedRequest, Error> = match socket.try_read(&mut buf) {
+    match socket.try_read(&mut buf) {
         Ok(_) => match parse_request(buf.to_vec()) {
             Ok(parsed_request) => {
                 event!(Level::DEBUG, "Parsed request: {:?}", parsed_request);
-                match parsed_request.cmd.as_str() {
-                    "NTF" => _handle_notify(socket, ring).await,
-                    "GET" => _handle_get(socket, std::str::from_utf8(&buf).unwrap(), ring).await,
-                    "SET" => _handle_set(socket, std::str::from_utf8(&buf).unwrap(), ring).await,
-                    "DEL" => _handle_delete(socket, std::str::from_utf8(&buf).unwrap(), ring).await,
-                    &_ => todo!(),
+                match parsed_request.cmd {
+                    CommandType::Get => {
+                        if let Some(key) = parsed_request.key {
+                            handle_get(socket, &key, ring).await;
+                        }
+                        Ok(())
+                    }
+                    CommandType::Set => {
+                        if let (Some(key), Some(value)) = (parsed_request.key, parsed_request.value)
+                        {
+                            handle_set(socket, &format!("{} {}", key, value), ring).await;
+                        }
+                        Ok(())
+                    }
+                    CommandType::Delete => {
+                        if let Some(key) = parsed_request.key {
+                            handle_delete(socket, &key, ring).await;
+                        }
+                        Ok(())
+                    }
+                    CommandType::Notify => {
+                        handle_notify(socket, ring).await;
+                        Ok(())
+                    }
+                    _ => Ok(()),
                 }
-                Ok(parsed_request)
             }
             Err(e) => {
                 handle_error(socket, &e, ring).await;
@@ -105,31 +123,32 @@ async fn handle_connection(socket: TcpStream, ring: Ring) {
             }
         },
         Err(e) => {
-            println!("error: {e}");
-            Err(Error {
-                code: 2, // Or another appropriate error code
-                msg: format!("Socket read error: {}", e),
-            })
+            event!(
+                Level::DEBUG,
+                "Failed to read from socket: {:?} {:?}",
+                socket,
+                e
+            );
+            Err(Error::from_code(ErrorCode::FailedSocketRead))
         }
-    };
-    event!(Level::DEBUG, "Request parsed: {:?}", request);
+    }
 }
 
-async fn _handle_get(mut socket: TcpStream, buf: &str, _ring: Ring) {
+async fn handle_get(mut socket: TcpStream, buf: &str, _ring: Ring) {
     socket.write_all(b"Here is the data\n").await.unwrap();
     socket.write_all(buf.as_bytes()).await.unwrap();
 }
 
-async fn _handle_set(mut socket: TcpStream, buf: &str, _ring: Ring) {
+async fn handle_set(mut socket: TcpStream, buf: &str, _ring: Ring) {
     socket.write_all(buf.as_bytes()).await.unwrap();
 }
 
-async fn _handle_delete(mut socket: TcpStream, buf: &str, _ring: Ring) {
+async fn handle_delete(mut socket: TcpStream, buf: &str, _ring: Ring) {
     socket.write_all(b"Deleted the data\n").await.unwrap();
     socket.write_all(buf.as_bytes()).await.unwrap();
 }
 
-async fn _handle_notify(mut socket: TcpStream, ring: Ring) {
+async fn handle_notify(mut socket: TcpStream, ring: Ring) {
     let partition_addr = socket.peer_addr().unwrap();
     event!(Level::DEBUG, "NTF from partition: {:?}", partition_addr,);
     socket.write_all(b"ACK\n").await.unwrap();
