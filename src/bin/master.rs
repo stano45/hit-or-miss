@@ -1,7 +1,7 @@
-use bytes::Bytes;
 use clap::Parser;
 use core::panic;
-use std::collections::HashMap;
+use hash_ring::HashRing;
+use std::fmt;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -20,8 +20,17 @@ struct Cli {
     #[arg(value_parser = clap::value_parser!(u16).range(1..))]
     port: u16,
 }
+#[derive(Debug, Clone)]
+struct Partition {
+    conn: Arc<Mutex<TcpStream>>,
+}
 
-type Db = Arc<Mutex<HashMap<String, Bytes>>>;
+impl fmt::Display for Partition {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "{}", self.conn.lock().unwrap().peer_addr().unwrap())
+    }
+}
+type Ring = Arc<Mutex<HashRing<Partition>>>;
 
 #[tokio::main]
 async fn main() {
@@ -44,7 +53,12 @@ async fn main() {
         }
     };
 
-    let db = Arc::new(Mutex::new(HashMap::new()));
+    // how many times one node is replicated on the ring
+    let num_replicas = 10;
+    // set this to define some initial nodes (maybe when the drops and restarts or something idk)
+    let initial_nodes: Vec<Partition> = Vec::new();
+    // consistent hashing node ring
+    let ring: Ring = Arc::new(Mutex::new(HashRing::new(initial_nodes, num_replicas)));
 
     loop {
         let (socket, _addr) = match listener.accept().await {
@@ -62,14 +76,14 @@ async fn main() {
             }
         };
 
-        let db_clone = db.clone();
+        let ring_clone: Ring = ring.clone();
         tokio::spawn(async move {
-            handle_connection(socket, db_clone).await;
+            handle_connection(socket, ring_clone).await;
         });
     }
 }
 
-async fn handle_connection(socket: TcpStream, _db: Db) {
+async fn handle_connection(socket: TcpStream, ring: Ring) {
     event!(
         Level::DEBUG,
         "{}",
@@ -92,7 +106,7 @@ async fn handle_connection(socket: TcpStream, _db: Db) {
                 }
                 Err(e) => {
                     event!(Level::DEBUG, "Erorr parsing request {:?}: {}", v, e);
-                    handle_error(socket, ERR_INVALID_REQUEST_FORMAT, _db).await;
+                    handle_error(socket, ERR_INVALID_REQUEST_FORMAT, ring).await;
                     return;
                 }
             };
@@ -102,19 +116,19 @@ async fn handle_connection(socket: TcpStream, _db: Db) {
             let end = str_buf.char_indices().nth(3).map(|(i, _)| i).unwrap_or(0);
             match &str_buf[start..end] {
                 "GET" => {
-                    handle_get(socket, str_buf, _db).await;
+                    handle_get(socket, str_buf, ring).await;
                 }
                 "SET" => {
-                    handle_set(socket, str_buf, _db).await;
+                    handle_set(socket, str_buf, ring).await;
                 }
                 "DEL" => {
-                    handle_delete(socket, str_buf, _db).await;
+                    handle_delete(socket, str_buf, ring).await;
                 }
                 "NTF" => {
-                    handle_notify(socket, _db).await;
+                    handle_notify(socket, ring).await;
                 }
                 _ => {
-                    handle_error(socket, ERR_INVALID_REQUEST_CMD, _db).await;
+                    handle_error(socket, ERR_INVALID_REQUEST_CMD, ring).await;
                 }
             }
         }
@@ -125,12 +139,12 @@ async fn handle_connection(socket: TcpStream, _db: Db) {
     }
 }
 
-async fn handle_get(mut socket: TcpStream, buf: &str, _db: Db) {
+async fn handle_get(mut socket: TcpStream, buf: &str, _ring: Ring) {
     socket.write_all(b"Here is the data\n").await.unwrap();
     socket.write_all(buf.as_bytes()).await.unwrap();
 }
 
-async fn handle_set(mut socket: TcpStream, buf: &str, _db: Db) {
+async fn handle_set(mut socket: TcpStream, buf: &str, _ring: Ring) {
     socket
         .write_all(
             b"[Intro: 2Pac]
@@ -148,21 +162,27 @@ async fn handle_set(mut socket: TcpStream, buf: &str, _db: Db) {
     socket.write_all(buf.as_bytes()).await.unwrap();
 }
 
-async fn handle_delete(mut socket: TcpStream, buf: &str, _db: Db) {
+async fn handle_delete(mut socket: TcpStream, buf: &str, _ring: Ring) {
     socket.write_all(b"Deleted the data\n").await.unwrap();
     socket.write_all(buf.as_bytes()).await.unwrap();
 }
 
-async fn handle_notify(mut socket: TcpStream, _db: Db) {
+async fn handle_notify(mut socket: TcpStream, ring: Ring) {
+    let partition_addr = socket.peer_addr().unwrap();
+    event!(Level::DEBUG, "NTF from partition: {:?}", partition_addr,);
+    socket.write_all(b"ACK\n").await.unwrap();
+
+    ring.lock().unwrap().add_node(&Partition {
+        conn: Arc::new(Mutex::new(socket)),
+    });
     event!(
         Level::DEBUG,
-        "NTF from partition: {:?}",
-        socket.peer_addr().unwrap(),
+        "Partition {:?} successfully added to ring",
+        partition_addr,
     );
-    socket.write_all(b"ACK\n").await.unwrap();
 }
 
-async fn handle_error(mut socket: TcpStream, err_msg: &[u8], _db: Db) {
+async fn handle_error(mut socket: TcpStream, err_msg: &[u8], _ring: Ring) {
     let mut message = b"Error: ".to_vec();
     message.extend_from_slice(err_msg);
     socket.write_all(&message).await.unwrap();
