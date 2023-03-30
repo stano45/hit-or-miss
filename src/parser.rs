@@ -1,3 +1,4 @@
+use std::fmt;
 use std::str;
 
 pub static ERR_UNKNOWN_COMMAND: &str = "Invalid request: command not found";
@@ -21,6 +22,12 @@ pub enum ErrorCode {
     InvalidSequence = 4,
     FailedSocketRead = 5,
     Unknown = 6,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.msg)
+    }
 }
 
 impl Error {
@@ -49,9 +56,20 @@ impl Error {
     }
 }
 
+// Add CommandType enum
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandType {
+    Get,
+    Delete,
+    Set,
+    Notify,
+    ListPartitions,
+    LSD,
+    Error,
+}
 #[derive(Debug, Clone)]
 pub struct ParsedRequest {
-    pub cmd: String,
+    pub cmd: CommandType,
     pub key: Option<String>,
     pub value: Option<String>,
     pub error: Option<Error>,
@@ -67,20 +85,24 @@ pub fn parse_request(mut message: Vec<u8>) -> Result<ParsedRequest, Error> {
 
     let cmd = extract_cmd(&parts)?;
 
-    let key = match cmd.as_str() {
-        "GET" | "SET" | "DEL" => extract_key(&parts),
+    // Update match condition to use CommandType enum
+    let key = match cmd {
+        CommandType::Get | CommandType::Set | CommandType::Delete => extract_key(&parts),
         _ => Ok(None),
     }?;
 
-    let value = match cmd.as_str() {
-        "SET" => extract_value(&parts),
+    // Update match condition to use CommandType enum
+    let value = match cmd {
+        CommandType::Set => extract_value(&parts),
         _ => Ok(None),
     }?;
 
-    let error = match cmd.as_str() {
-        "ERR" => extract_error(&parts),
+    // Update match condition to use CommandType enum
+    let error = match cmd {
+        CommandType::Error => extract_error(&parts),
         _ => Ok(None),
     }?;
+
     Ok(ParsedRequest {
         cmd,
         key,
@@ -97,12 +119,18 @@ fn extract_error(parts: &Vec<&str>) -> Result<Option<Error>, Error> {
     }
 }
 
-fn extract_cmd(parts: &Vec<&str>) -> Result<String, Error> {
+fn extract_cmd(parts: &Vec<&str>) -> Result<CommandType, Error> {
     if parts.is_empty() {
         Err(Error::from_code(ErrorCode::NotEnoughArgs))
     } else {
         match parts[0] {
-            "GET" | "DEL" | "SET" | "NTF" | "LSP" | "LSD" | "ERR" => Ok(parts[0].to_string()),
+            "GET" => Ok(CommandType::Get),
+            "DEL" => Ok(CommandType::Delete),
+            "SET" => Ok(CommandType::Set),
+            "NTF" => Ok(CommandType::Notify),
+            "LSP" => Ok(CommandType::ListPartitions),
+            "LSD" => Ok(CommandType::LSD),
+            "ERR" => Ok(CommandType::Error),
             _ => Err(Error::from_code(ErrorCode::InvalidRequestCmd)),
         }
     }
