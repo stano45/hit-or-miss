@@ -1,7 +1,6 @@
-use clap::Parser;
 use core::panic;
 use hash_ring::HashRing;
-use hitormiss::parser::{parse_request, Error, ParsedRequest};
+use hitormiss::parser::{parse_request, Error, ErrorCode, ParsedRequest};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use tokio::io::AsyncWriteExt;
@@ -9,13 +8,6 @@ use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tracing::{event, Level};
 
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    /// Network port to use
-    #[arg(value_parser = clap::value_parser!(u16).range(1..))]
-    port: u16,
-}
 #[derive(Debug, Clone)]
 struct Partition {
     conn: Arc<Mutex<TcpStream>>,
@@ -35,9 +27,12 @@ async fn main() {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let addr = "127.0.0.1:6969";
-    event!(Level::INFO, "Starting master service on address: {addr}");
-    let listener = match TcpListener::bind(addr).await {
+    const MASTER_ADDR: &str = "127.0.0.1:6969";
+    event!(
+        Level::INFO,
+        "Starting master service on address: {MASTER_ADDR}"
+    );
+    let listener = match TcpListener::bind(MASTER_ADDR).await {
         Ok(listener) => {
             event!(Level::DEBUG, "{}", format!("Bind {:?}", listener));
             listener
@@ -48,9 +43,9 @@ async fn main() {
         }
     };
 
-    // how many times one node is replicated on the ring
+    // # of replicas per partition
     let num_replicas = 10;
-    // set this to define some initial nodes (maybe when the drops and restarts or something idk)
+    // set this to define some initial nodes
     let initial_nodes: Vec<Partition> = Vec::new();
     // consistent hashing node ring
     let ring: Ring = Arc::new(Mutex::new(HashRing::new(initial_nodes, num_replicas)));
@@ -106,10 +101,7 @@ async fn handle_connection(socket: TcpStream, ring: Ring) {
         },
         Err(e) => {
             println!("error: {e}");
-            Err(Error {
-                code: 2, // Or another appropriate error code
-                msg: format!("Socket read error: {}", e),
-            })
+            Err(Error::from_code(ErrorCode::FailedSocketRead))
         }
     };
     event!(Level::DEBUG, "Request parsed: {:?}", request);
