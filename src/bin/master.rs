@@ -25,13 +25,11 @@ type Db = Arc<Mutex<HashMap<String, Bytes>>>;
 
 #[tokio::main]
 async fn main() {
-    let args = Cli::parse();
-
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    let addr = format!("127.0.0.1:{0}", args.port);
+    let addr = "127.0.0.1:6969";
     event!(Level::INFO, "Starting master service on address: {addr}");
     let listener = match TcpListener::bind(addr).await {
         Ok(listener) => {
