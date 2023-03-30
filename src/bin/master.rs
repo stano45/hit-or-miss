@@ -9,6 +9,7 @@ use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tracing::{event, Level};
 
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
@@ -90,6 +91,13 @@ async fn handle_connection(socket: TcpStream, ring: Ring) {
         Ok(_) => match parse_request(buf.to_vec()) {
             Ok(parsed_request) => {
                 event!(Level::DEBUG, "Parsed request: {:?}", parsed_request);
+                match parsed_request.cmd.as_str() {
+                    "NTF" => _handle_notify(socket, ring).await,
+                    "GET" => _handle_get(socket, std::str::from_utf8(&buf).unwrap(), ring).await,
+                    "SET" => _handle_set(socket, std::str::from_utf8(&buf).unwrap(), ring).await,
+                    "DEL" => _handle_delete(socket, std::str::from_utf8(&buf).unwrap(), ring).await,
+                    &_ => todo!(),
+                }
                 Ok(parsed_request)
             }
             Err(e) => {
