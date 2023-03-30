@@ -97,7 +97,8 @@ fn extract_key(parts: &Vec<&str>) -> Result<Option<String>, Error> {
             msg: ERR_NOT_ENOUGH_ARGS.to_string(),
         })
     } else if parts[0].to_uppercase() == "GET" && parts.len() >= 3 {
-        Ok(Some(format!("{} {}", parts[1], parts[2])))
+        let key = format!("{} {}", parts[1], parts[2]).replace("\\0", "\u{0000}");
+        Ok(Some(key))
     } else {
         Ok(Some(parts[1].to_string()))
     }
