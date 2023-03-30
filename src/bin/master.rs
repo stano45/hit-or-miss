@@ -138,10 +138,10 @@ async fn handle_connection(socket: TcpStream, ring: Ring) -> Result<(), Error> {
 
 async fn forward_to_partition(mut client_socket: TcpStream, request: ParsedRequest, ring: Ring) {
     let responsible_partition: Option<Partition> = if let Some(key) = request.key {
-        match ring.lock().await.get_node(key) {
-            Some(partition) => Some(partition.clone()),
-            None => None,
-        }
+        ring.lock()
+            .await
+            .get_node(key)
+            .map(|partition| partition.clone())
     } else {
         None
     };
