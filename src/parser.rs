@@ -81,23 +81,23 @@ pub fn parse_request(mut message: Vec<u8>) -> Result<ParsedRequest, Error> {
 
     let buf =
         std::str::from_utf8(&message).map_err(|_| Error::from_code(ErrorCode::InvalidSequence))?;
-    let parts: Vec<&str> = buf.splitn(3, char::is_whitespace).collect();
+    let mut parts: Vec<&str> = buf.splitn(3, char::is_whitespace).collect();
+    if parts.last() == Some(&"") || parts.last() == Some(&"\n") || parts.last() == Some(&"\0") {
+        parts.pop();
+    }
 
     let cmd = extract_cmd(&parts)?;
 
-    // Update match condition to use CommandType enum
     let key = match cmd {
         CommandType::Get | CommandType::Set | CommandType::Delete => extract_key(&parts),
         _ => Ok(None),
     }?;
 
-    // Update match condition to use CommandType enum
     let value = match cmd {
         CommandType::Set => extract_value(&parts),
         _ => Ok(None),
     }?;
 
-    // Update match condition to use CommandType enum
     let error = match cmd {
         CommandType::Error => extract_error(&parts),
         _ => Ok(None),
