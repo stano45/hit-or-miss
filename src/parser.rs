@@ -7,6 +7,7 @@ pub static ERR_INVALID_ARGS: &str = "Invalid request: invalid command arguments"
 pub static ERR_INVALID_SEQUENCE: &str = "Invalid request: invalid UTF-8 sequence";
 pub static ERR_SOCKET_READ: &str = "Internal error: could not read from socket";
 pub static ERR_UNKNOWN: &str = "Invalid request: invalid UTF-8 sequence";
+pub static ERR_NO_PARTITION: &str = "Internal error: no partition found";
 
 #[derive(Debug, Clone)]
 pub struct Error {
@@ -21,7 +22,8 @@ pub enum ErrorCode {
     InvalidRequestArg = 3,
     InvalidSequence = 4,
     FailedSocketRead = 5,
-    Unknown = 6,
+    NoResponsiblePartition = 6,
+    Unknown = 7,
 }
 
 impl fmt::Display for Error {
@@ -38,6 +40,7 @@ impl Error {
             ErrorCode::InvalidRequestArg => ERR_INVALID_ARGS.to_string(),
             ErrorCode::InvalidSequence => ERR_INVALID_SEQUENCE.to_string(),
             ErrorCode::FailedSocketRead => ERR_SOCKET_READ.to_string(),
+            ErrorCode::NoResponsiblePartition => ERR_NO_PARTITION.to_string(),
             ErrorCode::Unknown => ERR_UNKNOWN.to_string(),
         };
 
@@ -73,6 +76,7 @@ pub struct ParsedRequest {
     pub key: Option<String>,
     pub value: Option<String>,
     pub error: Option<Error>,
+    pub original_rq: String,
 }
 pub fn parse_request(mut message: Vec<u8>) -> Result<ParsedRequest, Error> {
     if let Some(pos) = message.iter().position(|&c| c == b'\0') {
@@ -108,6 +112,7 @@ pub fn parse_request(mut message: Vec<u8>) -> Result<ParsedRequest, Error> {
         key,
         value,
         error,
+        original_rq: buf.to_string(),
     })
 }
 

@@ -1,21 +1,23 @@
 use core::panic;
 use hash_ring::HashRing;
-use hitormiss::parser::{parse_request, CommandType, Error, ErrorCode};
+use hitormiss::parser::{parse_request, CommandType, Error, ErrorCode, ParsedRequest};
 use std::fmt;
-use std::sync::{Arc, Mutex};
-use tokio::io::AsyncWriteExt;
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tracing::{event, Level};
 
 #[derive(Debug, Clone)]
 struct Partition {
+    addr: String,
     conn: Arc<Mutex<TcpStream>>,
 }
 
 impl fmt::Display for Partition {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "{}", self.conn.lock().unwrap().peer_addr().unwrap())
+        write!(fmt, "{}", self.addr)
     }
 }
 
@@ -91,30 +93,30 @@ async fn handle_connection(socket: TcpStream, ring: Ring) -> Result<(), Error> {
             Ok(parsed_request) => {
                 event!(Level::DEBUG, "Parsed request: {:?}", parsed_request);
                 match parsed_request.cmd {
-                    CommandType::Get => {
-                        if let Some(key) = parsed_request.key {
-                            handle_get(socket, &key, ring).await;
-                        }
-                        Ok(())
-                    }
-                    CommandType::Set => {
-                        if let (Some(key), Some(value)) = (parsed_request.key, parsed_request.value)
-                        {
-                            handle_set(socket, &format!("{} {}", key, value), ring).await;
-                        }
-                        Ok(())
-                    }
-                    CommandType::Delete => {
-                        if let Some(key) = parsed_request.key {
-                            handle_delete(socket, &key, ring).await;
-                        }
+                    CommandType::Get | CommandType::Set | CommandType::Delete => {
+                        forward_to_partition(socket, parsed_request, ring).await;
                         Ok(())
                     }
                     CommandType::Notify => {
                         handle_notify(socket, ring).await;
                         Ok(())
                     }
-                    _ => Ok(()),
+                    CommandType::ListPartitions => {
+                        handle_list(socket, ring).await;
+                        Ok(())
+                    }
+                    CommandType::LSD => {
+                        unimplemented!("Send LSD to all partitions");
+                    }
+                    _ => {
+                        handle_error(
+                            socket,
+                            &Error::from_code(ErrorCode::InvalidRequestCmd),
+                            ring,
+                        )
+                        .await;
+                        Ok(())
+                    }
                 }
             }
             Err(e) => {
@@ -124,7 +126,7 @@ async fn handle_connection(socket: TcpStream, ring: Ring) -> Result<(), Error> {
         },
         Err(e) => {
             event!(
-                Level::DEBUG,
+                Level::ERROR,
                 "Failed to read from socket: {:?} {:?}",
                 socket,
                 e
@@ -134,18 +136,57 @@ async fn handle_connection(socket: TcpStream, ring: Ring) -> Result<(), Error> {
     }
 }
 
-async fn handle_get(mut socket: TcpStream, buf: &str, _ring: Ring) {
-    socket.write_all(b"Here is the data\n").await.unwrap();
-    socket.write_all(buf.as_bytes()).await.unwrap();
+async fn forward_to_partition(mut client_socket: TcpStream, request: ParsedRequest, ring: Ring) {
+    let responsible_partition: Option<Partition> = if let Some(key) = request.key {
+        ring.lock()
+            .await
+            .get_node(key)
+            .map(|partition| partition.clone())
+    } else {
+        None
+    };
+    match responsible_partition {
+        Some(partition) => {
+            let mut partition_socket = partition.conn.lock().await;
+            partition_socket
+                .write_all(request.original_rq.as_bytes())
+                .await
+                .unwrap();
+            event!(
+                Level::DEBUG,
+                "Forwarded request to partition: {:?}",
+                partition.addr
+            );
+            let mut buf = [0; 4096];
+            partition_socket.read(&mut buf).await.unwrap();
+            event!(
+                Level::DEBUG,
+                "Got response from partition: {:?}: {}",
+                partition.addr,
+                String::from_utf8(buf.to_vec()).unwrap()
+            );
+            client_socket.write_all(&buf).await.unwrap();
+        }
+        None => {
+            handle_error(
+                client_socket,
+                &Error::from_code(ErrorCode::NoResponsiblePartition),
+                ring,
+            )
+            .await;
+        }
+    }
 }
 
-async fn handle_set(mut socket: TcpStream, buf: &str, _ring: Ring) {
-    socket.write_all(buf.as_bytes()).await.unwrap();
-}
-
-async fn handle_delete(mut socket: TcpStream, buf: &str, _ring: Ring) {
-    socket.write_all(b"Deleted the data\n").await.unwrap();
-    socket.write_all(buf.as_bytes()).await.unwrap();
+async fn handle_list(mut _socket: TcpStream, _ring: Ring) {
+    // let mut partitions = ring.lock().unwrap();
+    // let mut response = b"".to_vec();
+    // for partition in partitions {
+    //     response.extend_from_slice(partition.to_string().as_bytes());
+    //     response.extend_from_slice(b"");
+    // }
+    // client_socket.write_all(&response).await.unwrap();
+    // return;
 }
 
 async fn handle_notify(mut socket: TcpStream, ring: Ring) {
@@ -153,7 +194,8 @@ async fn handle_notify(mut socket: TcpStream, ring: Ring) {
     event!(Level::DEBUG, "NTF from partition: {:?}", partition_addr,);
     socket.write_all(b"ACK\n").await.unwrap();
 
-    ring.lock().unwrap().add_node(&Partition {
+    ring.lock().await.add_node(&Partition {
+        addr: partition_addr.to_string(),
         conn: Arc::new(Mutex::new(socket)),
     });
     event!(
