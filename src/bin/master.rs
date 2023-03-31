@@ -1,8 +1,7 @@
 use core::panic;
 use hash_ring::HashRing;
-use hitormiss::parser::{
-    build_error_response, parse_request, CommandType, Error, ErrorCode, ParsedRequest,
-};
+use hitormiss::error::{Error, ErrorCode};
+use hitormiss::parser::{build_error_response, parse_request, CommandType, ParsedRequest};
 use std::fmt;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

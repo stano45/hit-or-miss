@@ -1,9 +1,8 @@
-extern crate lru;
-
 use core::panic;
+use hitormiss::error::{Error, ErrorCode};
 use hitormiss::parser::{
     build_error_response, build_hit_response, build_miss_response, build_notify_request,
-    build_ok_response, parse_request, CommandType, Error, ErrorCode,
+    build_ok_response, parse_request, CommandType,
 };
 use lru::LruCache;
 use std::num::NonZeroUsize;
