@@ -1,23 +1,15 @@
 extern crate lru;
 
-use clap::Parser;
 use core::panic;
 use hitormiss::parser::{
-    build_hit_response, build_miss_response, build_ok_response, Error, ErrorCode,
+    build_error_response, build_hit_response, build_miss_response, build_notify_request,
+    build_ok_response, parse_request, CommandType, Error, ErrorCode,
 };
 use lru::LruCache;
 use std::num::NonZeroUsize;
-use std::str;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tracing::{event, Level};
-
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct Cli {
-    #[arg(value_parser = clap::value_parser!(u16).range(1..))]
-    port: u16,
-}
 
 #[tokio::main]
 pub async fn main() {
@@ -28,100 +20,87 @@ pub async fn main() {
     let master_addr = String::from("127.0.0.1:6969");
     let mut stream = TcpStream::connect(&master_addr).await.unwrap();
 
+    notify_master(&mut stream).await;
+
     let mut cache = LruCache::<String, String>::new(NonZeroUsize::new(2).unwrap());
 
-    stream.write_all(b"NTF").await.unwrap();
-
-    let mut buf = [0; 4096];
-    let x = match stream.read(&mut buf).await {
-        Ok(_) => {
-            let v = buf.to_vec();
-            let str_buf = match std::str::from_utf8(&v) {
-                Ok(v) => {
-                    event!(
-                        Level::DEBUG,
-                        "Successfully parsed utf8 request from {:?}: {}",
-                        stream.peer_addr().unwrap(),
-                        v,
-                    );
-                    v.to_string()
-                }
-                Err(e) => {
-                    panic!("In {}", e.to_string())
-                }
-            };
-            Ok(str_buf)
-        }
-        Err(e) => Err(e),
-    };
-
-    match x {
-        Ok(str_buf) => {
-            // Get indices of multi-byte characters (without this, this string would panic: ˚å)
-            let start = str_buf.char_indices().next().map(|(i, _)| i).unwrap_or(0);
-            let end = str_buf.char_indices().nth(3).map(|(i, _)| i).unwrap_or(0);
-            match &str_buf[start..end] {
-                "ACK" => {
-                    event!(
-                        Level::DEBUG,
-                        "Received ACK from master: {:?}",
-                        stream.peer_addr().unwrap(),
-                    );
-                }
-                _ => {
-                    panic!(
-                        "Master responded with: {}, should be: ACK. Panicking!",
-                        str_buf
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            //TODO: I guess we should handle this error lol
-            println!("error: {e}");
-        }
-    }
-
     loop {
+        let mut buf = [0; 4096];
         match stream.read(&mut buf).await {
             Ok(_) => {
                 let v = buf.to_vec();
-                let str_buf = match str::from_utf8(&v) {
-                    Ok(v) => {
-                        event!(Level::INFO, "Successfully parsed message {}", v);
-                        v
+                let parsed_request = match parse_request(v) {
+                    Ok(parsed_request) => {
+                        event!(
+                            Level::INFO,
+                            "Successfully parsed message {}",
+                            parsed_request.original_rq
+                        );
+                        parsed_request
                     }
-                    Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
+                    Err(e) => {
+                        stream.write_all(&build_error_response(&e)).await.unwrap();
+                        continue;
+                    }
                 };
-                match &str_buf[0..3] {
-                    "GET" => {
-                        let key: &str = iterate_until_newline_character(str_buf, 4);
-                        match cache.get(key) {
-                            Some(value) => {
-                                stream
-                                    .write_all(&build_hit_response(key, value))
-                                    .await
-                                    .unwrap();
+
+                match parsed_request.cmd {
+                    CommandType::Get => {
+                        if let Some(key) = parsed_request.key {
+                            match cache.get(&key) {
+                                Some(value) => {
+                                    stream
+                                        .write_all(&build_hit_response(&key, value))
+                                        .await
+                                        .unwrap();
+                                }
+                                None => {
+                                    stream.write_all(&build_miss_response(&key)).await.unwrap();
+                                }
                             }
-                            None => {
-                                stream.write_all(&build_miss_response(key)).await.unwrap();
-                            }
-                        };
+                        } else {
+                            stream
+                                .write_all(&build_error_response(&Error::from_code(
+                                    ErrorCode::NotEnoughArgs,
+                                )))
+                                .await
+                                .unwrap();
+                        }
                     }
-                    "SET" => {
-                        let key = iterate_until_whitespace(str_buf, 4);
-                        let value = iterate_until_null_character(str_buf, 8);
-                        cache.put(key.to_string(), value.to_string());
-                        stream.write_all(&build_ok_response()).await.unwrap();
+                    CommandType::Set => {
+                        if let (Some(key), Some(value)) = (parsed_request.key, parsed_request.value)
+                        {
+                            cache.put(key, value);
+                            stream.write_all(&build_ok_response()).await.unwrap();
+                        } else {
+                            stream
+                                .write_all(&build_error_response(&Error::from_code(
+                                    ErrorCode::NotEnoughArgs,
+                                )))
+                                .await
+                                .unwrap();
+                        }
                     }
-                    "DEL" => {
-                        let key: &str = iterate_until_newline_character(str_buf, 4);
-                        cache.pop(key);
-                        stream.write_all(&build_ok_response()).await.unwrap();
+                    CommandType::Delete => {
+                        if let Some(key) = parsed_request.key {
+                            cache.pop(&key);
+                            stream.write_all(&build_ok_response()).await.unwrap();
+                        } else {
+                            stream
+                                .write_all(&build_error_response(&Error::from_code(
+                                    ErrorCode::NotEnoughArgs,
+                                )))
+                                .await
+                                .unwrap();
+                        }
                     }
                     _ => {
-                        send_error(&mut stream, &Error::from_code(ErrorCode::InvalidRequestCmd))
-                            .await;
+                        stream
+                            .write_all(&build_error_response(&Error::from_code(
+                                ErrorCode::InvalidRequestCmd,
+                            )))
+                            .await
+                            .unwrap();
                     }
                 }
             }
@@ -130,28 +109,6 @@ pub async fn main() {
             }
         }
     }
-}
-
-fn iterate_until_whitespace(s: &str, start_index: usize) -> &str {
-    let end_index = s[start_index..]
-        .find(char::is_whitespace)
-        .map_or(s.len(), |i| start_index + i);
-
-    &s[start_index..end_index]
-}
-
-fn iterate_until_null_character(input: &str, start_index: usize) -> &str {
-    let end_index = input[start_index..]
-        .find('\0')
-        .map_or(input.len(), |i| start_index + i);
-    &input[start_index..end_index]
-}
-
-fn iterate_until_newline_character(input: &str, start_index: usize) -> &str {
-    let end_index = input[start_index..]
-        .find('\n')
-        .map_or(input.len(), |i| start_index + i);
-    &input[start_index..end_index]
 }
 
 #[cfg(test)]
@@ -166,8 +123,48 @@ mod tests {
     }
 }
 
-async fn send_error(socket: &mut TcpStream, err: &Error) {
-    let mut message = b"Error: ".to_vec();
-    message.extend_from_slice(err.msg.as_bytes());
-    socket.write_all(&message).await.unwrap();
+async fn notify_master(stream: &mut TcpStream) {
+    stream.write_all(&build_notify_request()).await.unwrap();
+
+    let mut buf = [0; 4096];
+    match stream.read(&mut buf).await {
+        Ok(_) => match parse_request(buf.to_vec()) {
+            Ok(parsed_request) => {
+                event!(Level::DEBUG, "Parsed notify response: {:?}", parsed_request);
+                match parsed_request.cmd {
+                    CommandType::Ack => {
+                        event!(
+                            Level::INFO,
+                            "Successfully connected to master. Listening for commands."
+                        );
+                    }
+                    _ => {
+                        event!(
+                            Level::ERROR,
+                            "Failed to connect to master. Received unexpected response: {:?}",
+                            parsed_request
+                        );
+                        panic!("Failed to connect to master");
+                    }
+                }
+            }
+            Err(e) => {
+                event!(
+                    Level::ERROR,
+                    "Failed to connect to master. Couldn't parse response: {:?}",
+                    e
+                );
+                panic!("Failed to connect to master");
+            }
+        },
+        Err(e) => {
+            event!(
+                Level::ERROR,
+                "Failed to read from socket: {:?} {:?}",
+                stream,
+                e
+            );
+            panic!("Failed to connect to master");
+        }
+    }
 }

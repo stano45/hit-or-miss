@@ -110,7 +110,7 @@ async fn handle_connection(mut socket: TcpStream, ring: Ring) -> Result<(), Erro
                     CommandType::LSD => {
                         unimplemented!("Send LSD to all partition and aggregate response");
                     }
-                    CommandType::Hit | CommandType::Miss | CommandType::Error => {
+                    _ => {
                         socket
                             .write_all(&build_error_response(&Error::from_code(
                                 ErrorCode::UnsupportedCommandMaster,
@@ -140,10 +140,7 @@ async fn handle_connection(mut socket: TcpStream, ring: Ring) -> Result<(), Erro
 
 async fn forward_to_partition(mut client_socket: TcpStream, request: ParsedRequest, ring: Ring) {
     let responsible_partition: Option<Partition> = if let Some(key) = request.key {
-        ring.lock()
-            .await
-            .get_node(key)
-            .map(|partition| partition.clone())
+        ring.lock().await.get_node(key).map(Clone::clone)
     } else {
         None
     };
@@ -156,18 +153,19 @@ async fn forward_to_partition(mut client_socket: TcpStream, request: ParsedReque
                 .unwrap();
             event!(
                 Level::DEBUG,
-                "Forwarded request to partition: {:?}",
-                partition.addr
+                "Forwarded request to partition {:?}: {}",
+                partition.addr,
+                request.original_rq
             );
-            let mut buf = [0; 4096];
-            partition_socket.read(&mut buf).await.unwrap();
+            let mut buf = vec![0; 4096];
+            let read_amount = partition_socket.read(&mut buf).await.unwrap();
             event!(
                 Level::DEBUG,
                 "Got response from partition: {:?}: {}",
                 partition.addr,
-                String::from_utf8(buf.to_vec()).unwrap()
+                String::from_utf8(buf[..read_amount].to_vec()).unwrap()
             );
-            client_socket.write_all(&buf).await.unwrap();
+            client_socket.write_all(&buf[..read_amount]).await.unwrap();
         }
         None => {
             client_socket

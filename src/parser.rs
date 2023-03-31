@@ -99,6 +99,8 @@ pub enum CommandType {
     LSD,
     Hit,
     Miss,
+    Ack,
+    Ok,
     Error,
 }
 #[derive(Debug, Clone)]
@@ -168,6 +170,8 @@ fn extract_cmd(parts: &Vec<&str>) -> Result<CommandType, Error> {
             "LSD" => Ok(CommandType::LSD),
             "HIT" => Ok(CommandType::Hit),
             "MSS" => Ok(CommandType::Miss),
+            "ACK" => Ok(CommandType::Ack),
+            "OK" => Ok(CommandType::Ok),
             "ERR" => Ok(CommandType::Error),
             _ => Err(Error::from_code(ErrorCode::InvalidRequestCmd)),
         }
@@ -207,4 +211,8 @@ pub fn build_ok_response() -> Vec<u8> {
 
 pub fn build_error_response(err: &Error) -> Vec<u8> {
     format!("ERR {} {}\0", err.code.to_u8(), err.msg).into_bytes()
+}
+
+pub fn build_notify_request() -> Vec<u8> {
+    "NTF\0".to_string().into_bytes()
 }
