@@ -126,7 +126,7 @@ async fn handle_connection(socket: TcpStream, ring: Ring) -> Result<(), Error> {
         },
         Err(e) => {
             event!(
-                Level::ERROR
+                Level::ERROR,
                 "Failed to read from socket: {:?} {:?}",
                 socket,
                 e
