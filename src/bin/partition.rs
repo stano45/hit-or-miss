@@ -5,9 +5,8 @@ use core::panic;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::str;
-use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpStream, TcpListener};
 use tracing::{event, Level};
 
 #[derive(Parser)]
@@ -17,66 +16,18 @@ struct Cli {
     port: u16,
 }
 
-type Cache = Arc<Mutex<LruCache<String, String>>>;
-
 #[tokio::main]
 pub async fn main() {
-    let args = Cli::parse();
-
-    let addr = format!("localhost:{0}", args.port);
-    let addr_clone = addr.clone();
 
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .init();
-    event!(Level::INFO, "Starting partition on address: {addr}");
 
-    let listener = match TcpListener::bind(addr).await {
-        Ok(listener) => {
-            event!(
-                Level::INFO,
-                "Connection established on address: {addr_clone}"
-            );
-            listener
-        }
-        Err(_) => {
-            panic!("Failed to bind!");
-        }
-    };
-    //send NTF to master, wait for OK
-    notify_master().await;
-
-    let cache = Arc::new(Mutex::new(LruCache::<String, String>::new(
-        NonZeroUsize::new(2).unwrap(),
-    )));
-
-    loop {
-        let (stream, _addr) = match listener.accept().await {
-            Ok((socket, addr)) => {
-                event!(
-                    Level::INFO,
-                    "{}",
-                    format!("Connection accepted: {:?} {:?}", socket, addr)
-                );
-                (socket, addr)
-            }
-            Err(e) => {
-                event!(Level::ERROR, "Failed to accept connection: {}", e);
-                continue;
-            }
-        };
-        let cache_clone = cache.clone();
-        tokio::spawn(async move {
-            stream.readable().await.unwrap();
-            handle_connection(stream, cache_clone).await;
-        });
-    }
-}
-
-async fn notify_master() {
     let master_addr = String::from("127.0.0.1:6969");
     let mut stream = TcpStream::connect(&master_addr).await.unwrap();
-    // send data to master
+
+    let mut cache = LruCache::<String, String>::new(NonZeroUsize::new(2).unwrap());
+    
     stream.write_all(b"NTF").await.unwrap();
 
     let mut buf = [0; 4096];
@@ -94,7 +45,7 @@ async fn notify_master() {
                     v.to_string()
                 }
                 Err(e) => {
-                    panic!("{}", e.to_string())
+                    panic!("In {}", e.to_string())
                 }
             };
             Ok(str_buf)
@@ -128,15 +79,57 @@ async fn notify_master() {
             println!("error: {e}");
         }
     }
+
+    loop {
+        match stream.read(&mut buf).await {
+            Ok(_) => {
+                let v = buf.to_vec();
+                let str_buf = match str::from_utf8(&v) {
+                    Ok(v) => {
+                        event!(Level::INFO, "Successfully parsed message {}", v);
+                        v
+                    }
+                    Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
+                };
+                match &str_buf[0..3] {
+                    "GET" => {
+                        let key: &str = iterate_until_newline_character(str_buf, 4);
+                        let value_string = cache.get(key).unwrap().to_owned();
+                        stream.write_all(value_string.as_bytes()).await.unwrap();
+                    }
+                    "SET" => {
+                        let key = iterate_until_whitespace(str_buf, 4);
+                        let value = iterate_until_null_character(str_buf, 8);
+                        cache
+                            .put(key.to_string(), value.to_string());
+                        stream.write_all(b"Ok\n").await.unwrap();
+                    }
+                    "DEL" => {
+                        let key: &str = iterate_until_newline_character(str_buf, 4);
+                        let value_string = cache.pop(key).unwrap().to_owned();
+                        stream.write_all(b"Ok\n").await.unwrap();
+                    }
+                    _ => {
+                        stream
+                            .write_all(b"There was an error with the request\n")
+                            .await
+                            .unwrap();
+                        stream.write_all(str_buf.as_bytes()).await.unwrap();
+                    }
+                }
+            }
+            Err(e) => {
+                panic!("error: {e}");
+            }
+        }
+    }
 }
 
 fn iterate_until_whitespace(s: &str, start_index: usize) -> &str {
-    // Find the index of the next whitespace character
     let end_index = s[start_index..]
         .find(char::is_whitespace)
         .map_or(s.len(), |i| start_index + i);
 
-    // Return the substring from the start index to the end index
     &s[start_index..end_index]
 }
 
@@ -145,59 +138,9 @@ fn iterate_until_null_character(input: &str, start_index: usize) -> &str {
     &input[start_index..end_index]
 }
 
-async fn handle_connection(mut stream: TcpStream, cache: Cache) {
-    let mut buf = [0; 4096];
-    match stream.try_read(&mut buf) {
-        Ok(_) => {
-            let v = buf.to_vec();
-            let str_buf = match str::from_utf8(&v) {
-                Ok(v) => {
-                    event!(Level::INFO, "Successfully parsed message {}", v);
-                    v
-                }
-                Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
-            };
-            match &str_buf[0..3] {
-                "GET" => {
-                    let key = iterate_until_null_character(str_buf, 4);
-                    let value_string = match cache.lock().unwrap().get(key) {
-                        Some(value) => value,
-                        None => panic!("Error occured when trying to get value"),
-                    }.to_owned();
-                    let value = &value_string[..];
-                    stream.write_all(b"Doener mit Dativ\n").await.unwrap();
-                    stream.write_all(value.as_bytes()).await.unwrap();
-                }
-                "SET" => {
-                    let key = iterate_until_whitespace(str_buf, 4);
-                    let value = iterate_until_null_character(str_buf, 8);
-                    println!("Key: {}, Value: {}", key, value);
-                    cache
-                        .lock()
-                        .unwrap()
-                        .push(key.to_string(), value.to_string());
-                    let value_string = cache.lock().unwrap().get(key).unwrap().to_owned();
-                    println!("Value in cache: {}", value_string);
-                    stream.write_all(b"Here is the data\n").await.unwrap();
-                    stream.write_all(str_buf.as_bytes()).await.unwrap();
-                }
-                "DEL" => {
-                    stream.write_all(b"Deleted the data\n").await.unwrap();
-                    stream.write_all(str_buf.as_bytes()).await.unwrap();
-                }
-                _ => {
-                    stream
-                        .write_all(b"There was an error with the request\n")
-                        .await
-                        .unwrap();
-                    stream.write_all(str_buf.as_bytes()).await.unwrap();
-                }
-            }
-        }
-        Err(e) => {
-            panic!("error: {e}");
-        }
-    }
+fn iterate_until_newline_character(input: &str, start_index: usize) -> &str {
+    let end_index = input[start_index..].find('\n').map_or(input.len(), |i| start_index + i);
+    &input[start_index..end_index]
 }
 
 #[cfg(test)]
