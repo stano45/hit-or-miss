@@ -1,63 +1,6 @@
-use std::fmt;
+use crate::error::Error;
+use crate::error::ErrorCode;
 use std::str;
-
-pub static ERR_UNKNOWN_COMMAND: &str = "Invalid request: command not found";
-pub static ERR_NOT_ENOUGH_ARGS: &str = "Invalid request: not enough arguments";
-pub static ERR_INVALID_ARGS: &str = "Invalid request: invalid command arguments";
-pub static ERR_INVALID_SEQUENCE: &str = "Invalid request: invalid UTF-8 sequence";
-pub static ERR_SOCKET_READ: &str = "Internal error: could not read from socket";
-pub static ERR_UNKNOWN: &str = "Invalid request: invalid UTF-8 sequence";
-pub static ERR_NO_PARTITION: &str = "Internal error: no partition found";
-
-#[derive(Debug, Clone)]
-pub struct Error {
-    pub code: ErrorCode,
-    pub msg: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ErrorCode {
-    InvalidRequestCmd = 1,
-    NotEnoughArgs = 2,
-    InvalidRequestArg = 3,
-    InvalidSequence = 4,
-    FailedSocketRead = 5,
-    NoResponsiblePartition = 6,
-    Unknown = 7,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.msg)
-    }
-}
-
-impl Error {
-    pub fn from_code(code: ErrorCode) -> Self {
-        let msg = match code {
-            ErrorCode::InvalidRequestCmd => ERR_UNKNOWN_COMMAND.to_string(),
-            ErrorCode::NotEnoughArgs => ERR_NOT_ENOUGH_ARGS.to_string(),
-            ErrorCode::InvalidRequestArg => ERR_INVALID_ARGS.to_string(),
-            ErrorCode::InvalidSequence => ERR_INVALID_SEQUENCE.to_string(),
-            ErrorCode::FailedSocketRead => ERR_SOCKET_READ.to_string(),
-            ErrorCode::NoResponsiblePartition => ERR_NO_PARTITION.to_string(),
-            ErrorCode::Unknown => ERR_UNKNOWN.to_string(),
-        };
-
-        Error { code, msg }
-    }
-    pub fn from_int(value: u8) -> Self {
-        let code = match value {
-            1 => ErrorCode::InvalidRequestCmd,
-            2 => ErrorCode::NotEnoughArgs,
-            3 => ErrorCode::InvalidRequestArg,
-            4 => ErrorCode::InvalidSequence,
-            _ => ErrorCode::Unknown,
-        };
-
-        Self::from_code(code)
-    }
-}
 
 // Add CommandType enum
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +11,10 @@ pub enum CommandType {
     Notify,
     ListPartitions,
     LSD,
+    Hit,
+    Miss,
+    Ack,
+    Ok,
     Error,
 }
 #[derive(Debug, Clone)]
@@ -120,7 +67,7 @@ fn extract_error(parts: &Vec<&str>) -> Result<Option<Error>, Error> {
     if parts.len() < 3 {
         Err(Error::from_code(ErrorCode::NotEnoughArgs))
     } else {
-        Ok(Some(Error::from_int(parts[1].parse().unwrap())))
+        Ok(Some(Error::from_u8(parts[1].parse().unwrap())))
     }
 }
 
@@ -135,6 +82,10 @@ fn extract_cmd(parts: &Vec<&str>) -> Result<CommandType, Error> {
             "NTF" => Ok(CommandType::Notify),
             "LSP" => Ok(CommandType::ListPartitions),
             "LSD" => Ok(CommandType::LSD),
+            "HIT" => Ok(CommandType::Hit),
+            "MSS" => Ok(CommandType::Miss),
+            "ACK" => Ok(CommandType::Ack),
+            "OK" => Ok(CommandType::Ok),
             "ERR" => Ok(CommandType::Error),
             _ => Err(Error::from_code(ErrorCode::InvalidRequestCmd)),
         }
@@ -158,4 +109,24 @@ fn extract_value(parts: &Vec<&str>) -> Result<Option<String>, Error> {
     } else {
         Ok(Some(parts[2].to_string()))
     }
+}
+
+pub fn build_hit_response(key: &str, value: &str) -> Vec<u8> {
+    format!("HIT {} {}\0", key, value).into_bytes()
+}
+
+pub fn build_miss_response(key: &str) -> Vec<u8> {
+    format!("MSS {}\0", key).into_bytes()
+}
+
+pub fn build_ok_response() -> Vec<u8> {
+    "OK\0".to_string().into_bytes()
+}
+
+pub fn build_error_response(err: &Error) -> Vec<u8> {
+    format!("ERR {} {}\0", err.code.to_u8(), err.msg).into_bytes()
+}
+
+pub fn build_notify_request() -> Vec<u8> {
+    "NTF\0".to_string().into_bytes()
 }

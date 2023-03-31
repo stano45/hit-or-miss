@@ -1,6 +1,7 @@
 use core::panic;
 use hash_ring::HashRing;
-use hitormiss::parser::{parse_request, CommandType, Error, ErrorCode, ParsedRequest};
+use hitormiss::error::{Error, ErrorCode};
+use hitormiss::parser::{build_error_response, parse_request, CommandType, ParsedRequest};
 use std::fmt;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -46,7 +47,7 @@ async fn main() {
     };
 
     // # of replicas per partition
-    let num_replicas = 10;
+    let num_replicas = 1;
     // set this to define some initial nodes
     let initial_nodes: Vec<Partition> = Vec::new();
     // consistent hashing node ring
@@ -73,14 +74,14 @@ async fn main() {
             match handle_connection(socket, ring_clone).await {
                 Ok(_) => {}
                 Err(e) => {
-                    event!(Level::ERROR, "Failed to handle connection: {}", e);
+                    event!(Level::DEBUG, "Failed to handle connection: {}", e);
                 }
             }
         });
     }
 }
 
-async fn handle_connection(socket: TcpStream, ring: Ring) -> Result<(), Error> {
+async fn handle_connection(mut socket: TcpStream, ring: Ring) -> Result<(), Error> {
     event!(
         Level::DEBUG,
         "{}",
@@ -106,21 +107,21 @@ async fn handle_connection(socket: TcpStream, ring: Ring) -> Result<(), Error> {
                         Ok(())
                     }
                     CommandType::LSD => {
-                        unimplemented!("Send LSD to all partitions");
+                        unimplemented!("Send LSD to all partition and aggregate response");
                     }
                     _ => {
-                        handle_error(
-                            socket,
-                            &Error::from_code(ErrorCode::InvalidRequestCmd),
-                            ring,
-                        )
-                        .await;
+                        socket
+                            .write_all(&build_error_response(&Error::from_code(
+                                ErrorCode::UnsupportedCommandMaster,
+                            )))
+                            .await
+                            .unwrap();
                         Ok(())
                     }
                 }
             }
             Err(e) => {
-                handle_error(socket, &e, ring).await;
+                socket.write_all(&build_error_response(&e)).await.unwrap();
                 Err(e)
             }
         },
@@ -138,10 +139,7 @@ async fn handle_connection(socket: TcpStream, ring: Ring) -> Result<(), Error> {
 
 async fn forward_to_partition(mut client_socket: TcpStream, request: ParsedRequest, ring: Ring) {
     let responsible_partition: Option<Partition> = if let Some(key) = request.key {
-        ring.lock()
-            .await
-            .get_node(key)
-            .map(|partition| partition.clone())
+        ring.lock().await.get_node(key).map(Clone::clone)
     } else {
         None
     };
@@ -154,26 +152,27 @@ async fn forward_to_partition(mut client_socket: TcpStream, request: ParsedReque
                 .unwrap();
             event!(
                 Level::DEBUG,
-                "Forwarded request to partition: {:?}",
-                partition.addr
+                "Forwarded request to partition {:?}: {}",
+                partition.addr,
+                request.original_rq
             );
-            let mut buf = [0; 4096];
-            partition_socket.read(&mut buf).await.unwrap();
+            let mut buf = vec![0; 4096];
+            let read_amount = partition_socket.read(&mut buf).await.unwrap();
             event!(
                 Level::DEBUG,
                 "Got response from partition: {:?}: {}",
                 partition.addr,
-                String::from_utf8(buf.to_vec()).unwrap()
+                String::from_utf8(buf[..read_amount].to_vec()).unwrap()
             );
-            client_socket.write_all(&buf).await.unwrap();
+            client_socket.write_all(&buf[..read_amount]).await.unwrap();
         }
         None => {
-            handle_error(
-                client_socket,
-                &Error::from_code(ErrorCode::NoResponsiblePartition),
-                ring,
-            )
-            .await;
+            client_socket
+                .write_all(&build_error_response(&Error::from_code(
+                    ErrorCode::NoPartition,
+                )))
+                .await
+                .unwrap();
         }
     }
 }
@@ -203,10 +202,4 @@ async fn handle_notify(mut socket: TcpStream, ring: Ring) {
         "Partition {:?} successfully added to ring",
         partition_addr,
     );
-}
-
-async fn handle_error(mut socket: TcpStream, err: &Error, _ring: Ring) {
-    let mut message = b"Error: ".to_vec();
-    message.extend_from_slice(err.msg.as_bytes());
-    socket.write_all(&message).await.unwrap();
 }
