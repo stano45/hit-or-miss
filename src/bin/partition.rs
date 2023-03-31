@@ -104,6 +104,7 @@ pub async fn main() {
                     }
                     "DEL" => {
                         let key: &str = iterate_until_newline_character(str_buf, 4);
+                        cache.pop(key);
                         stream.write_all(b"Ok\n").await.unwrap();
                     }
                     _ => {
@@ -150,8 +151,8 @@ mod tests {
 
     #[test]
     fn check_if_value_was_added_to_cache() {
-        let cache = LruCache::<String, String>::new(NonZeroUsize::new(2).unwrap());
+        let mut cache = LruCache::<String, String>::new(NonZeroUsize::new(2).unwrap());
         cache.put(String::from("Name"), String::from("Fjoni"));
-        assert_eq!(*cache.lock().unwrap().get("Name").unwrap(), "Fjoni");
+        assert_eq!(*cache.get("Name").unwrap(), "Fjoni");
     }
 }
