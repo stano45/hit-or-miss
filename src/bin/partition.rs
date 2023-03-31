@@ -6,7 +6,7 @@ use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::str;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpStream, TcpListener};
+use tokio::net::{TcpListener, TcpStream};
 use tracing::{event, Level};
 
 #[derive(Parser)]
@@ -18,7 +18,6 @@ struct Cli {
 
 #[tokio::main]
 pub async fn main() {
-
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .init();
@@ -27,7 +26,7 @@ pub async fn main() {
     let mut stream = TcpStream::connect(&master_addr).await.unwrap();
 
     let mut cache = LruCache::<String, String>::new(NonZeroUsize::new(2).unwrap());
-    
+
     stream.write_all(b"NTF").await.unwrap();
 
     let mut buf = [0; 4096];
@@ -100,8 +99,7 @@ pub async fn main() {
                     "SET" => {
                         let key = iterate_until_whitespace(str_buf, 4);
                         let value = iterate_until_null_character(str_buf, 8);
-                        cache
-                            .put(key.to_string(), value.to_string());
+                        cache.put(key.to_string(), value.to_string());
                         stream.write_all(b"Ok\n").await.unwrap();
                     }
                     "DEL" => {
@@ -134,12 +132,16 @@ fn iterate_until_whitespace(s: &str, start_index: usize) -> &str {
 }
 
 fn iterate_until_null_character(input: &str, start_index: usize) -> &str {
-    let end_index = input[start_index..].find('\0').map_or(input.len(), |i| start_index + i);
+    let end_index = input[start_index..]
+        .find('\0')
+        .map_or(input.len(), |i| start_index + i);
     &input[start_index..end_index]
 }
 
 fn iterate_until_newline_character(input: &str, start_index: usize) -> &str {
-    let end_index = input[start_index..].find('\n').map_or(input.len(), |i| start_index + i);
+    let end_index = input[start_index..]
+        .find('\n')
+        .map_or(input.len(), |i| start_index + i);
     &input[start_index..end_index]
 }
 
