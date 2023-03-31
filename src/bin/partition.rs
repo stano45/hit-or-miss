@@ -130,6 +130,21 @@ async fn notify_master() {
     }
 }
 
+fn iterate_until_whitespace(s: &str, start_index: usize) -> &str {
+    // Find the index of the next whitespace character
+    let end_index = s[start_index..]
+        .find(char::is_whitespace)
+        .map_or(s.len(), |i| start_index + i);
+
+    // Return the substring from the start index to the end index
+    &s[start_index..end_index]
+}
+
+fn iterate_until_null_character(input: &str, start_index: usize) -> &str {
+    let end_index = input[start_index..].find('\0').map_or(input.len(), |i| start_index + i);
+    &input[start_index..end_index]
+}
+
 async fn handle_connection(mut stream: TcpStream, cache: Cache) {
     let mut buf = [0; 4096];
     match stream.try_read(&mut buf) {
@@ -144,17 +159,18 @@ async fn handle_connection(mut stream: TcpStream, cache: Cache) {
             };
             match &str_buf[0..3] {
                 "GET" => {
-                    let key = &str_buf[4..8];
-                    println!("Key: {}", key);
-                    let value_string = cache.lock().unwrap().get(key).unwrap().to_owned();
+                    let key = iterate_until_null_character(str_buf, 4);
+                    let value_string = match cache.lock().unwrap().get(key) {
+                        Some(value) => value,
+                        None => panic!("Error occured when trying to get value"),
+                    }.to_owned();
                     let value = &value_string[..];
-                    println!("Value should be an error: {}", value);
                     stream.write_all(b"Doener mit Dativ\n").await.unwrap();
                     stream.write_all(value.as_bytes()).await.unwrap();
                 }
                 "SET" => {
-                    let key = &str_buf[5..8];
-                    let value = &str_buf[9..12];
+                    let key = iterate_until_whitespace(str_buf, 4);
+                    let value = iterate_until_null_character(str_buf, 8);
                     println!("Key: {}, Value: {}", key, value);
                     cache
                         .lock()
