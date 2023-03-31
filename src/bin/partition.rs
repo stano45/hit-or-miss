@@ -6,7 +6,7 @@ use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::str;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tracing::{event, Level};
 
 #[derive(Parser)]
@@ -104,7 +104,6 @@ pub async fn main() {
                     }
                     "DEL" => {
                         let key: &str = iterate_until_newline_character(str_buf, 4);
-                        let value_string = cache.pop(key).unwrap().to_owned();
                         stream.write_all(b"Ok\n").await.unwrap();
                     }
                     _ => {
@@ -151,13 +150,8 @@ mod tests {
 
     #[test]
     fn check_if_value_was_added_to_cache() {
-        let cache = Arc::new(Mutex::new(LruCache::<String, String>::new(
-            NonZeroUsize::new(2).unwrap(),
-        )));
-        cache
-            .lock()
-            .unwrap()
-            .put(String::from("Name"), String::from("Fjoni"));
+        let cache = LruCache::<String, String>::new(NonZeroUsize::new(2).unwrap());
+        cache.put(String::from("Name"), String::from("Fjoni"));
         assert_eq!(*cache.lock().unwrap().get("Name").unwrap(), "Fjoni");
     }
 }
