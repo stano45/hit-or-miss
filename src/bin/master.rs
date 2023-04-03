@@ -94,7 +94,10 @@ async fn handle_connection(mut socket: TcpStream, ring: Ring) -> Result<(), Erro
             Ok(parsed_request) => {
                 event!(Level::DEBUG, "Parsed request: {:?}", parsed_request);
                 match parsed_request.cmd {
-                    CommandType::Get | CommandType::Set | CommandType::Delete | CommandType::Lsd => {
+                    CommandType::Get
+                    | CommandType::Set
+                    | CommandType::Delete
+                    | CommandType::Lsd => {
                         forward_to_partition(socket, parsed_request, ring).await;
                         Ok(())
                     }
