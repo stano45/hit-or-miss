@@ -44,6 +44,11 @@ To run Hit or Miss, you need to have Rust and Cargo installed. Visit [the offici
 
 4. Use a client (e.g., telnet, netcat, or a custom client) to connect to the master server and send commands.
 
+   For example:
+   ```
+   echo "SET key value" | nc 127.0.0.1 6969
+   ```
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
