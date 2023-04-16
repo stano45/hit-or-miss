@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::error::ErrorCode;
+use lru::LruCache;
 use std::str;
 
 // Add CommandType enum
@@ -10,7 +11,7 @@ pub enum CommandType {
     Set,
     Notify,
     ListPartitions,
-    LSD,
+    Lsd,
     Hit,
     Miss,
     Ack,
@@ -40,7 +41,9 @@ pub fn parse_request(mut message: Vec<u8>) -> Result<ParsedRequest, Error> {
     let cmd = extract_cmd(&parts)?;
 
     let key = match cmd {
-        CommandType::Get | CommandType::Set | CommandType::Delete => extract_key(&parts),
+        CommandType::Get | CommandType::Set | CommandType::Delete | CommandType::Lsd => {
+            extract_key(&parts)
+        }
         _ => Ok(None),
     }?;
 
@@ -81,7 +84,7 @@ fn extract_cmd(parts: &Vec<&str>) -> Result<CommandType, Error> {
             "SET" => Ok(CommandType::Set),
             "NTF" => Ok(CommandType::Notify),
             "LSP" => Ok(CommandType::ListPartitions),
-            "LSD" => Ok(CommandType::LSD),
+            "LSD" => Ok(CommandType::Lsd),
             "HIT" => Ok(CommandType::Hit),
             "MSS" => Ok(CommandType::Miss),
             "ACK" => Ok(CommandType::Ack),
@@ -113,6 +116,14 @@ fn extract_value(parts: &Vec<&str>) -> Result<Option<String>, Error> {
 
 pub fn build_hit_response(key: &str, value: &str) -> Vec<u8> {
     format!("HIT {} {}\0", key, value).into_bytes()
+}
+
+pub fn build_lsd_response(cache: &LruCache<String, String>) -> Vec<u8> {
+    let mut s: String = "".to_owned();
+    for (key, val) in cache.iter() {
+        s.push_str(&format!("Key: {}, Value: {} \n", key, val).to_owned());
+    }
+    s.into_bytes()
 }
 
 pub fn build_miss_response(key: &str) -> Vec<u8> {
