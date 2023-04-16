@@ -1,19 +1,63 @@
+use chrono::{DateTime, Utc};
 use core::panic;
 use hash_ring::HashRing;
 use hitormiss::error::{Error, ErrorCode};
 use hitormiss::parser::{build_error_response, parse_request, CommandType, ParsedRequest};
+use std::collections::HashSet;
 use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::time::SystemTime;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tracing::{event, Level};
+use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct Partition {
+    id: Uuid,
     addr: String,
     conn: Arc<Mutex<TcpStream>>,
+    time_joined: SystemTime,
+}
+
+impl Partition {
+    fn new(addr: String, conn: Arc<Mutex<TcpStream>>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            addr,
+            conn,
+            time_joined: SystemTime::now(),
+        }
+    }
+}
+
+impl fmt::Debug for Partition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let datetime: DateTime<Utc> = self.time_joined.into();
+        let timestamp_formatted = datetime.format("%Y-%m-%d %H:%M:%S%.3f");
+        f.debug_struct("Partition")
+            .field("id", &self.id)
+            .field("addr", &self.addr)
+            .field("time_joined", &timestamp_formatted.to_string())
+            .finish()
+    }
+}
+
+impl PartialEq for Partition {
+    fn eq(&self, other: &Self) -> bool {
+        self.addr == other.addr
+    }
+}
+
+impl Eq for Partition {}
+
+impl Hash for Partition {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.addr.hash(state);
+    }
 }
 
 impl fmt::Display for Partition {
@@ -23,6 +67,7 @@ impl fmt::Display for Partition {
 }
 
 type Ring = Arc<Mutex<HashRing<Partition>>>;
+type PartitionSet = Arc<Mutex<HashSet<Partition>>>;
 
 #[tokio::main]
 async fn main() {
@@ -52,6 +97,7 @@ async fn main() {
     let initial_nodes: Vec<Partition> = Vec::new();
     // consistent hashing node ring
     let ring: Ring = Arc::new(Mutex::new(HashRing::new(initial_nodes, num_replicas)));
+    let partition_set: PartitionSet = Arc::new(Mutex::new(HashSet::new()));
 
     loop {
         let (socket, _addr) = match listener.accept().await {
@@ -70,8 +116,10 @@ async fn main() {
         };
 
         let ring_clone: Ring = ring.clone();
+        let partition_set_clone: PartitionSet = partition_set.clone();
+
         tokio::spawn(async move {
-            match handle_connection(socket, ring_clone).await {
+            match handle_connection(socket, ring_clone, partition_set_clone).await {
                 Ok(_) => {}
                 Err(e) => {
                     event!(Level::DEBUG, "Failed to handle connection: {}", e);
@@ -81,7 +129,11 @@ async fn main() {
     }
 }
 
-async fn handle_connection(mut socket: TcpStream, ring: Ring) -> Result<(), Error> {
+async fn handle_connection(
+    mut socket: TcpStream,
+    ring: Ring,
+    partition_set: PartitionSet,
+) -> Result<(), Error> {
     event!(
         Level::DEBUG,
         "{}",
@@ -102,11 +154,11 @@ async fn handle_connection(mut socket: TcpStream, ring: Ring) -> Result<(), Erro
                         Ok(())
                     }
                     CommandType::Notify => {
-                        handle_notify(socket, ring).await;
+                        handle_notify(socket, ring, partition_set).await;
                         Ok(())
                     }
                     CommandType::ListPartitions => {
-                        handle_list(socket, ring).await;
+                        handle_list(socket, partition_set).await;
                         Ok(())
                     }
                     _ => {
@@ -177,29 +229,30 @@ async fn forward_to_partition(mut client_socket: TcpStream, request: ParsedReque
     }
 }
 
-async fn handle_list(mut _socket: TcpStream, _ring: Ring) {
-    // let mut partitions = ring.lock().unwrap();
-    // let mut response = b"".to_vec();
-    // for partition in partitions {
-    //     response.extend_from_slice(partition.to_string().as_bytes());
-    //     response.extend_from_slice(b"");
-    // }
-    // client_socket.write_all(&response).await.unwrap();
-    // return;
+async fn handle_list(mut socket: TcpStream, partition_set: PartitionSet) {
+    let partitions = partition_set
+        .lock()
+        .await
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    let partitions_str = format!("LSP {:?}", partitions);
+    socket.write_all(partitions_str.as_bytes()).await.unwrap();
 }
 
-async fn handle_notify(mut socket: TcpStream, ring: Ring) {
+async fn handle_notify(mut socket: TcpStream, ring: Ring, partition_set: PartitionSet) {
     let partition_addr = socket.peer_addr().unwrap();
     event!(Level::DEBUG, "NTF from partition: {:?}", partition_addr,);
     socket.write_all(b"ACK\n").await.unwrap();
 
-    ring.lock().await.add_node(&Partition {
-        addr: partition_addr.to_string(),
-        conn: Arc::new(Mutex::new(socket)),
-    });
+    let partition = Partition::new(partition_addr.to_string(), Arc::new(Mutex::new(socket)));
+
+    ring.lock().await.add_node(&partition);
+    partition_set.lock().await.insert(partition.clone());
+
     event!(
         Level::DEBUG,
         "Partition {:?} successfully added to ring",
-        partition_addr,
+        partition,
     );
 }
