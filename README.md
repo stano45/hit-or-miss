@@ -8,10 +8,10 @@ Hit or Miss is a simple distributed key-value store implemented in Rust. This pr
 - LRU Cache for key-value storage on partition servers
 - Consistent hashing to distribute data across multiple partition servers
 - Support for `GET`, `SET`, and `DELETE` operations
-- Automatic partition server registration and load balancing
+- Automatic partition server registration and load balancing!
 
 ## System design sketch
-![Screenshot from 2023-03-30 10-31-41](https://user-images.githubusercontent.com/17514555/228778919-c5573eb7-3f4b-495a-9a54-c00f9b27b946.png)
+![Untitled(2)](https://user-images.githubusercontent.com/17514555/232305726-da38352e-db89-43aa-824d-e3e90582cc97.jpg)
 
 ## Prerequisites
 
