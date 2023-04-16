@@ -126,6 +126,10 @@ pub fn build_lsd_response(cache: &LruCache<String, String>) -> Vec<u8> {
     s.into_bytes()
 }
 
+pub fn build_lsp_response(partitions_str: String) -> Vec<u8> {
+    format!("LSP {}\0", partitions_str).into_bytes()
+}
+
 pub fn build_miss_response(key: &str) -> Vec<u8> {
     format!("MSS {}\0", key).into_bytes()
 }
@@ -140,4 +144,8 @@ pub fn build_error_response(err: &Error) -> Vec<u8> {
 
 pub fn build_notify_request() -> Vec<u8> {
     "NTF\0".to_string().into_bytes()
+}
+
+pub fn build_ack_response() -> Vec<u8> {
+    "ACK\0".to_string().into_bytes()
 }

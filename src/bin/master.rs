@@ -2,7 +2,10 @@ use chrono::{DateTime, Utc};
 use core::panic;
 use hash_ring::HashRing;
 use hitormiss::error::{Error, ErrorCode};
-use hitormiss::parser::{build_error_response, parse_request, CommandType, ParsedRequest};
+use hitormiss::parser::{
+    build_ack_response, build_error_response, build_lsp_response, build_miss_response,
+    build_ok_response, parse_request, CommandType, ParsedRequest,
+};
 use std::collections::HashSet;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -150,7 +153,7 @@ async fn handle_connection(
                     | CommandType::Set
                     | CommandType::Delete
                     | CommandType::Lsd => {
-                        forward_to_partition(socket, parsed_request, ring).await;
+                        forward_to_partition(socket, &parsed_request, ring, partition_set).await;
                         Ok(())
                     }
                     CommandType::Notify => {
@@ -189,19 +192,64 @@ async fn handle_connection(
     }
 }
 
-async fn forward_to_partition(mut client_socket: TcpStream, request: ParsedRequest, ring: Ring) {
-    let responsible_partition: Option<Partition> = if let Some(key) = request.key {
-        ring.lock().await.get_node(key).map(Clone::clone)
+async fn handle_failed_forward(mut client_socket: TcpStream, request: &ParsedRequest) {
+    match request.cmd {
+        CommandType::Get => {
+            if let Some(key) = &request.key {
+                client_socket
+                    .write_all(&build_miss_response(key.as_str()))
+                    .await
+                    .unwrap();
+            } else {
+                client_socket
+                    .write_all(&build_error_response(&Error::from_code(ErrorCode::Unknown)))
+                    .await
+                    .unwrap();
+            }
+        }
+        CommandType::Set | CommandType::Delete => {
+            client_socket.write_all(&build_ok_response()).await.unwrap();
+        }
+        _ => {}
+    }
+}
+
+async fn unregister_partition(partition: &Partition, ring: Ring, partition_set: PartitionSet) {
+    ring.lock().await.remove_node(partition);
+    partition_set.lock().await.remove(partition);
+}
+
+async fn forward_to_partition(
+    mut client_socket: TcpStream,
+    request: &ParsedRequest,
+    ring: Ring,
+    partition_set: PartitionSet,
+) {
+    let responsible_partition: Option<Partition> = if let Some(key) = &request.key {
+        ring.lock()
+            .await
+            .get_node(key.to_string())
+            .map(Clone::clone)
     } else {
         None
     };
     match responsible_partition {
         Some(partition) => {
             let mut partition_socket = partition.conn.lock().await;
-            partition_socket
+            if let Err(e) = partition_socket
                 .write_all(request.original_rq.as_bytes())
                 .await
-                .unwrap();
+            {
+                event!(
+                    Level::ERROR,
+                    "Failed to write to partition: {:?} {:?}",
+                    partition.addr,
+                    e
+                );
+                unregister_partition(&partition, ring, partition_set).await;
+                handle_failed_forward(client_socket, request).await;
+                return;
+            }
             event!(
                 Level::DEBUG,
                 "Forwarded request to partition {:?}: {}",
@@ -209,7 +257,31 @@ async fn forward_to_partition(mut client_socket: TcpStream, request: ParsedReque
                 request.original_rq
             );
             let mut buf = vec![0; 4096];
-            let read_amount = partition_socket.read(&mut buf).await.unwrap();
+            let read_amount = match partition_socket.read(&mut buf).await {
+                Ok(amount) => amount,
+                Err(error) => {
+                    event!(
+                        Level::ERROR,
+                        "Failed to read from partition: {:?}, error: {:?}",
+                        partition.addr,
+                        error
+                    );
+                    unregister_partition(&partition, ring, partition_set).await;
+                    handle_failed_forward(client_socket, request).await;
+                    return;
+                }
+            };
+
+            if read_amount == 0 {
+                event!(
+                    Level::ERROR,
+                    "Zero bytes read from partition: {:?}",
+                    partition.addr
+                );
+                unregister_partition(&partition, ring, partition_set).await;
+                handle_failed_forward(client_socket, request).await;
+                return;
+            }
             event!(
                 Level::DEBUG,
                 "Got response from partition: {:?}: {}",
@@ -221,7 +293,7 @@ async fn forward_to_partition(mut client_socket: TcpStream, request: ParsedReque
         None => {
             client_socket
                 .write_all(&build_error_response(&Error::from_code(
-                    ErrorCode::NoPartition,
+                    ErrorCode::NoPartitionsInRing,
                 )))
                 .await
                 .unwrap();
@@ -236,23 +308,22 @@ async fn handle_list(mut socket: TcpStream, partition_set: PartitionSet) {
         .iter()
         .cloned()
         .collect::<Vec<_>>();
-    let partitions_str = format!("LSP {:?}", partitions);
-    socket.write_all(partitions_str.as_bytes()).await.unwrap();
+    let partitions_str = format!("{:?}", partitions);
+    socket
+        .write_all(&build_lsp_response(partitions_str))
+        .await
+        .unwrap();
 }
 
 async fn handle_notify(mut socket: TcpStream, ring: Ring, partition_set: PartitionSet) {
     let partition_addr = socket.peer_addr().unwrap();
     event!(Level::DEBUG, "NTF from partition: {:?}", partition_addr,);
-    socket.write_all(b"ACK\n").await.unwrap();
+    socket.write_all(&build_ack_response()).await.unwrap();
 
     let partition = Partition::new(partition_addr.to_string(), Arc::new(Mutex::new(socket)));
 
     ring.lock().await.add_node(&partition);
     partition_set.lock().await.insert(partition.clone());
 
-    event!(
-        Level::DEBUG,
-        "Partition {:?} successfully added to ring",
-        partition,
-    );
+    event!(Level::DEBUG, "{:?} successfully added to ring", partition,);
 }
